@@ -12,7 +12,8 @@
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "migrate": "node scripts/migrate.js",
-    "create-user": "node scripts/create-user.js"
+    "create-user": "node scripts/create-user.js",
+    "ensure-support-admin": "node scripts/ensure-support-admin.js"
   },
   "dependencies": {
     "ari-client": "^2.2.0",

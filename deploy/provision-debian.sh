@@ -155,10 +155,11 @@ AUDIO_DIR=$AUDIO_DIR
 UPLOAD_TMP_DIR=$APP_DIR/server/uploads/tmp
 FFMPEG_PATH=ffmpeg
 
-# Super-admin "support" account created on every deploy — sees all campaigns.
-# Change SUPPORT_ADMIN_PASSWORD here (this file is not committed) to rotate it.
+# Super-admin "support" account (sees all campaigns). Set a password here to have
+# it created/ensured on every deploy; leave blank and create it over SSH with:
+#   cd $APP_DIR/server && npm run ensure-support-admin -- '<password>'
 SUPPORT_ADMIN_USER=support
-SUPPORT_ADMIN_PASSWORD=SweetCMSB2026!
+SUPPORT_ADMIN_PASSWORD=
 ENV
   chown "$APP_USER":"$APP_USER" "$ENV_FILE"
   chmod 600 "$ENV_FILE"
