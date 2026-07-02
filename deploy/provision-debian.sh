@@ -78,7 +78,7 @@ fi
 log "Installing system packages…"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y curl ca-certificates gnupg openssl git \
+apt-get install -y curl ca-certificates gnupg openssl git sudo \
   asterisk asterisk-modules mariadb-server ffmpeg nginx certbot python3-certbot-nginx fail2ban ufw
 
 # Asterisk resolves sound:... under <astdatadir>/sounds, and astdatadir differs
