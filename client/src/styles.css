@@ -158,11 +158,18 @@ input:focus, select:focus { outline: none; border-color: var(--primary); }
 .actions-cell { text-align: right; white-space: nowrap; }
 .actions { display: inline-flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
 
-/* Admin campaigns list has an extra Owner column. Tighten only THIS table's
-   spacing and cap the owner width so all columns fit the page without sideways
-   scrolling — nothing else on the app is affected. */
-.table.table-tight th, .table.table-tight td { padding: 9px 8px; }
-.cell-ellip { display: inline-block; max-width: 110px; overflow: hidden;
+/* Admin campaigns list has an extra Owner column. Instead of cramming it into
+   the 1100px column, let JUST this table use the full screen width (centered)
+   so all columns fit without wrapping or sideways scroll. Everything else on the
+   app keeps the normal 1100px layout. */
+.table-wrap.wide-admin {
+  width: min(1500px, 96vw);
+  margin-left: 50%;
+  transform: translateX(-50%);
+}
+.table-wrap.wide-admin .table th { position: static; } /* sticky misbehaves inside a transform */
+.table.table-tight th, .table.table-tight td { padding: 9px 10px; }
+.cell-ellip { display: inline-block; max-width: 160px; overflow: hidden;
               text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
 
 /* Badges */

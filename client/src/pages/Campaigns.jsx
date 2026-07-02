@@ -150,7 +150,7 @@ export default function Campaigns() {
       ) : campaigns.length === 0 ? (
         <div className="empty">No campaigns yet. Create your first one.</div>
       ) : (
-        <div className="table-wrap">
+        <div className={`table-wrap${isAdmin ? ' wide-admin' : ''}`}>
         <table className={`table${isAdmin ? ' table-tight' : ''}`}>
           <thead>
             <tr>
