@@ -1,0 +1,13 @@
+; /etc/asterisk/ari.conf
+; Credentials here must match ARI_USERNAME / ARI_PASSWORD in server/.env.
+
+[general]
+enabled = yes
+pretty = yes
+; allowed_origins controls browser CORS for ARI itself; the backend talks to
+; ARI server-to-server, so this is not needed for call-bot.
+
+[callbot]
+type = user
+read_only = no
+password = change-me        ; <-- set to a strong secret, mirror in .env

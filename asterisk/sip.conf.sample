@@ -1,0 +1,49 @@
+; /etc/asterisk/sip.conf  (chan_sip — Asterisk 16 / Debian 11)
+;
+; Outbound SIP trunk named "trunk" — matches DIAL_ENDPOINT_TEMPLATE in .env when
+; SIP_DRIVER=chan_sip:
+;   DIAL_ENDPOINT_TEMPLATE=SIP/{number}@trunk
+; call-bot dials SIP/<number>@trunk, i.e. it calls <number> via the peer "trunk".
+;
+; NOTE: chan_sip is deprecated upstream (removed in Asterisk 21) but ships and
+; works in Asterisk 16 on Debian 11. If you ever move to Asterisk 18/20, switch
+; to pjsip.conf and set SIP_DRIVER=pjsip.
+;
+; If chan_sip and chan_pjsip are both loaded, only ONE may bind UDP 5060. The
+; Debian default pjsip.conf defines no transport, so chan_sip owns 5060 here.
+; (To be safe you can disable PJSIP: add "noload => chan_pjsip.so" to modules.conf.)
+
+[general]
+context = from-trunk
+bindaddr = 0.0.0.0
+bindport = 5060
+allowguest = no               ; reject anonymous inbound
+alwaysauthreject = yes        ; don't reveal valid usernames to scanners
+disallow = all
+allow = ulaw                  ; G.711 µ-law; add "allow = alaw" for EU providers
+; If this server is behind NAT (it shouldn't be — use a public IP), set:
+;externip = YOUR.PUBLIC.IP
+;localnet = 10.0.0.0/8
+
+; Register to the provider (remove this line if your provider uses IP auth only):
+register => YOUR_SIP_USERNAME:YOUR_SIP_PASSWORD@sip.yourprovider.com
+
+; ---- The outbound trunk call-bot dials through ----
+[trunk]
+type = peer
+host = sip.yourprovider.com   ; provider SIP host or IP
+;port = 5060
+username = YOUR_SIP_USERNAME
+defaultuser = YOUR_SIP_USERNAME
+fromuser = YOUR_SIP_USERNAME
+secret = YOUR_SIP_PASSWORD
+fromdomain = sip.yourprovider.com
+context = from-trunk
+qualify = yes
+insecure = invite,port        ; relax if the provider authenticates by IP
+disallow = all
+allow = ulaw
+; Honour the caller ID call-bot sets per campaign (provider may still override
+; if your account isn't allowed to present arbitrary CLI):
+trustrpid = yes
+sendrpid = yes

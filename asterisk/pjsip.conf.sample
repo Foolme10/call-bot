@@ -1,0 +1,53 @@
+; /etc/asterisk/pjsip.conf
+; Outbound SIP trunk named "trunk" — matches DIAL_ENDPOINT_TEMPLATE in .env:
+;   DIAL_ENDPOINT_TEMPLATE=PJSIP/{number}@trunk
+; call-bot dials PJSIP/<number>@trunk, i.e. it sends <number> as the request
+; user to the endpoint called "trunk". Fill in your provider's details.
+
+; ---- Transport ----
+[transport-udp]
+type = transport
+protocol = udp
+bind = 0.0.0.0
+
+; ---- Authentication to your provider ----
+[trunk-auth]
+type = auth
+auth_type = userpass
+username = YOUR_SIP_USERNAME
+password = YOUR_SIP_PASSWORD
+
+; ---- Address of record / where to send calls ----
+[trunk]
+type = aor
+contact = sip:sip.yourprovider.com:5060   ; provider SIP host (or IP)
+qualify_frequency = 30
+
+; ---- Registration (skip if your provider uses IP auth instead) ----
+[trunk]
+type = registration
+outbound_auth = trunk-auth
+server_uri = sip:sip.yourprovider.com
+client_uri = sip:YOUR_SIP_USERNAME@sip.yourprovider.com
+retry_interval = 60
+
+; ---- The endpoint call-bot dials through ----
+[trunk]
+type = endpoint
+context = from-trunk            ; inbound calls land here (not used for broadcast)
+disallow = all
+allow = ulaw                    ; G.711 µ-law; add alaw for EU providers
+outbound_auth = trunk-auth
+aors = trunk
+from_user = YOUR_SIP_USERNAME
+; direct_media off so Asterisk stays in the media path and can play audio.
+direct_media = no
+; Trust the caller ID call-bot sets per campaign (provider may still override
+; if your account isn't allowed to present arbitrary CLI).
+trust_id_outbound = yes
+
+; ---- Identify inbound traffic from the provider to this endpoint ----
+[trunk]
+type = identify
+endpoint = trunk
+match = sip.yourprovider.com

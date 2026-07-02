@@ -1,0 +1,26 @@
+; /etc/asterisk/extensions.conf
+;
+; NOTE: call-bot's dialer originates calls straight into the Stasis application
+; via ARI (app=callbot), so OUTBOUND broadcasting does NOT need dialplan here.
+; When a callee answers, the channel enters Stasis(callbot) and the backend
+; plays the campaign audio. This file only matters for inbound handling.
+
+[from-trunk]
+; Inbound calls from the provider. A pure broadcaster can simply reject them.
+exten => _.,1,Hangup()
+
+; ---- Answering Machine Detection context (used only by AMD-enabled campaigns) ----
+; call-bot originates AMD campaigns into this context (DIAL_AMD_CONTEXT in .env).
+; AMD() analyses the answered audio and sets AMDSTATUS (HUMAN/MACHINE/NOTSURE/
+; HANGUP), which the backend reads in Stasis to decide whether to play. Tuning
+; thresholds live in /etc/asterisk/amd.conf (Asterisk ships sane defaults).
+[callbot-amd]
+exten => _.,1,Answer()
+ same => n,AMD()
+ same => n,Stasis(callbot)
+ same => n,Hangup()
+
+; ---- Optional: hand inbound calls to call-bot too (e.g. for press-1 flows) ----
+; exten => _X.,1,NoOp(Inbound ${CALLERID(num)})
+;  same => n,Stasis(callbot,inbound)
+;  same => n,Hangup()

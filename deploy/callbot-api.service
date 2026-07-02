@@ -1,0 +1,27 @@
+# /etc/systemd/system/callbot-api.service
+# Runs the call-bot backend (API + dialer). Adjust paths/user as needed.
+#   sudo cp deploy/callbot-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now callbot-api
+
+[Unit]
+Description=call-bot API and dialer
+After=network.target mysql.service asterisk.service
+Wants=asterisk.service
+
+[Service]
+Type=simple
+# Run as a user that can read the Asterisk sounds dir (or add it to the
+# 'asterisk' group). Do NOT run as root in production.
+User=callbot
+Group=asterisk
+WorkingDirectory=/opt/call-bot/server
+ExecStart=/usr/bin/node src/index.js
+EnvironmentFile=/opt/call-bot/server/.env
+Restart=always
+RestartSec=3
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,42 @@
+{
+  "name": "callbot-server",
+  "version": "0.1.0",
+  "description": "call-bot voice broadcasting backend (Asterisk ARI + MySQL)",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "migrate": "node scripts/migrate.js",
+    "create-user": "node scripts/create-user.js"
+  },
+  "dependencies": {
+    "ari-client": "^2.2.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "csv-parse": "^5.5.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.4.0",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.1",
+    "mysql2": "^3.11.0",
+    "ws": "^8.18.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  },
+  "comment_overrides": "Patches advisories in ari-client's old transitive deps (localhost-only HTTP to Asterisk ARI). All bumps stay within the major version the parent uses, so they're drop-in.",
+  "overrides": {
+    "form-data": "^2.5.4",
+    "tough-cookie": "^4.1.4",
+    "qs": "^6.5.3"
+  }
+}

@@ -1,0 +1,10 @@
+; /etc/asterisk/http.conf
+; ARI rides on Asterisk's built-in HTTP server, so it must be enabled.
+; Bind to localhost only — call-bot's backend runs on the same server.
+
+[general]
+enabled = yes
+bindaddr = 127.0.0.1
+bindport = 8088
+; If you ever terminate TLS for ARI, configure tlsenable/tlscertfile here and
+; point ARI_URL at https://127.0.0.1:8089 instead.
