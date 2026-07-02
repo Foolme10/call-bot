@@ -21,6 +21,10 @@ cd "$APP_DIR"
 log "Pulling latest code from GitHub…"
 git pull --ff-only
 
+# Pulls run as root, which leaves new/changed files root-owned; npm then runs
+# as $APP_USER and needs to write here (package-lock, node_modules, dist).
+chown -R "$APP_USER":"$APP_USER" "$APP_DIR"
+
 log "Backend: dependencies + database migrations…"
 sudo -u "$APP_USER" -H bash -lc "cd '$APP_DIR/server' && npm install --omit=dev && npm run migrate"
 
