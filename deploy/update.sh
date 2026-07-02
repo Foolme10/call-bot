@@ -16,38 +16,45 @@ WEB_ROOT=/var/www/callbot
 
 log() { printf '\n\033[1;36m==>\033[0m %s\n' "$*"; }
 
-cd "$APP_DIR"
+# Everything lives inside main() so bash parses the WHOLE file before running
+# any of it — the git pull below rewrites this very script when it changes,
+# and executing a file that mutates mid-run is undefined behavior.
+main() {
+  cd "$APP_DIR"
 
-log "Pulling latest code from GitHub…"
-git pull --ff-only
+  log "Pulling latest code from GitHub…"
+  git pull --ff-only
 
-# Pulls run as root, which leaves new/changed files root-owned; npm then runs
-# as $APP_USER and needs to write here (package-lock, node_modules, dist).
-chown -R "$APP_USER":"$APP_USER" "$APP_DIR"
+  # Pulls run as root, which leaves new/changed files root-owned; npm then runs
+  # as $APP_USER and needs to write here (package-lock, node_modules, dist).
+  chown -R "$APP_USER":"$APP_USER" "$APP_DIR"
 
-log "Backend: dependencies + database migrations…"
-sudo -u "$APP_USER" -H bash -lc "cd '$APP_DIR/server' && npm install --omit=dev && npm run migrate"
+  log "Backend: dependencies + database migrations…"
+  sudo -u "$APP_USER" -H bash -lc "cd '$APP_DIR/server' && npm install --omit=dev && npm run migrate"
 
-log "Frontend: build + publish…"
-sudo -u "$APP_USER" -H bash -lc "cd '$APP_DIR/client' && npm install && npm run build"
-cp -r "$APP_DIR/client/dist/." "$WEB_ROOT/"
+  log "Frontend: build + publish…"
+  sudo -u "$APP_USER" -H bash -lc "cd '$APP_DIR/client' && npm install && npm run build"
+  cp -r "$APP_DIR/client/dist/." "$WEB_ROOT/"
 
-log "Restarting backend…"
-# Restart whichever supervisor is actually running the backend. Checking the
-# ACTIVE one first matters: a box can have a disabled systemd unit lying around
-# while pm2 does the real work, and starting both fights over port 4000.
-if systemctl is-active --quiet callbot-api 2>/dev/null; then
-  systemctl restart callbot-api
-elif sudo -u "$APP_USER" -H pm2 describe callbot-api >/dev/null 2>&1; then
-  sudo -u "$APP_USER" -H pm2 restart callbot-api
-elif systemctl list-unit-files 2>/dev/null | grep -q '^callbot-api'; then
-  systemctl restart callbot-api
-else
-  echo "[warn] Could not find a callbot-api service (systemd or pm2) — restart it manually."
-fi
+  log "Restarting backend…"
+  # Restart whichever supervisor is actually running the backend. Checking the
+  # ACTIVE one first matters: a box can have a disabled systemd unit lying
+  # around while pm2 does the real work, and starting both fights over port 4000.
+  if systemctl is-active --quiet callbot-api 2>/dev/null; then
+    systemctl restart callbot-api
+  elif sudo -u "$APP_USER" -H pm2 describe callbot-api >/dev/null 2>&1; then
+    sudo -u "$APP_USER" -H pm2 restart callbot-api
+  elif systemctl list-unit-files 2>/dev/null | grep -q '^callbot-api'; then
+    systemctl restart callbot-api
+  else
+    echo "[warn] Could not find a callbot-api service (systemd or pm2) — restart it manually."
+  fi
 
-sleep 2
-log "Health check:"
-curl -s localhost:4000/api/health || true
-echo
-log "Done. Current version: $(git log --oneline -1)"
+  sleep 2
+  log "Health check:"
+  curl -s localhost:4000/api/health || true
+  echo
+  log "Done. Current version: $(git log --oneline -1)"
+}
+
+main "$@"
