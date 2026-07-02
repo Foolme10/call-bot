@@ -19,9 +19,12 @@ ExecStart=/usr/bin/node src/index.js
 EnvironmentFile=/opt/call-bot/server/.env
 Restart=always
 RestartSec=3
-# Hardening
+# Hardening. ProtectSystem=full makes /usr read-only, so the Asterisk sounds
+# dir (AUDIO_DIR) must be whitelisted or audio uploads fail with EROFS.
 NoNewPrivileges=true
 ProtectSystem=full
+ReadWritePaths=-/usr/share/asterisk/sounds/callbot
+ReadWritePaths=-/var/lib/asterisk/sounds/callbot
 
 [Install]
 WantedBy=multi-user.target
