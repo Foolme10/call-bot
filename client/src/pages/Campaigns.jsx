@@ -171,7 +171,11 @@ export default function Campaigns() {
                   <strong>{c.name}</strong>
                   <div className="muted small">{c.audio_name || 'No audio'}</div>
                 </td>
-                {isAdmin && <td className="muted small">{c.owner || '—'}</td>}
+                {isAdmin && (
+                  <td className="muted small">
+                    <span className="cell-ellip" title={c.owner || ''}>{c.owner || '—'}</span>
+                  </td>
+                )}
                 <td>
                   <span className={STATUS_CLASS[c.status] || 'badge'}>{c.status}</span>
                 </td>
