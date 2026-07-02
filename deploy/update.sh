@@ -33,10 +33,15 @@ sudo -u "$APP_USER" -H bash -lc "cd '$APP_DIR/client' && npm install && npm run 
 cp -r "$APP_DIR/client/dist/." "$WEB_ROOT/"
 
 log "Restarting backend…"
-if systemctl list-unit-files 2>/dev/null | grep -q '^callbot-api'; then
+# Restart whichever supervisor is actually running the backend. Checking the
+# ACTIVE one first matters: a box can have a disabled systemd unit lying around
+# while pm2 does the real work, and starting both fights over port 4000.
+if systemctl is-active --quiet callbot-api 2>/dev/null; then
   systemctl restart callbot-api
 elif sudo -u "$APP_USER" -H pm2 describe callbot-api >/dev/null 2>&1; then
   sudo -u "$APP_USER" -H pm2 restart callbot-api
+elif systemctl list-unit-files 2>/dev/null | grep -q '^callbot-api'; then
+  systemctl restart callbot-api
 else
   echo "[warn] Could not find a callbot-api service (systemd or pm2) — restart it manually."
 fi
