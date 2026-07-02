@@ -148,8 +148,8 @@ ORIGINATE_TIMEOUT=30
 DIAL_AMD_CONTEXT=callbot-amd
 
 # Trunk capacity — auto-pacing never exceeds these. Lower them for a small/demo trunk.
-MAX_CONCURRENT_CALLS=10
-MAX_CPS=3
+MAX_CONCURRENT_CALLS=50
+MAX_CPS=100
 
 AUDIO_DIR=$AUDIO_DIR
 UPLOAD_TMP_DIR=$APP_DIR/server/uploads/tmp
