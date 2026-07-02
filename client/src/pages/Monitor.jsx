@@ -227,7 +227,7 @@ export default function Monitor() {
           <div className="summary-cards">
             <div className="summary-card hl">
               <div className="num">{live.length}</div>
-              <div className="muted small">On the line now</div>
+              <div className="muted small">Active calls</div>
             </div>
             <div className="summary-card">
               <div className="num ok-text">{answered}</div>
@@ -247,7 +247,7 @@ export default function Monitor() {
             </div>
             <div className="summary-card" title={`${HELP.failed}\n\n${HELP.congestion}`}>
               <div className="num">{n('failed') + n('congestion')}</div>
-              <div className="muted small">Couldn’t connect</div>
+              <div className="muted small">Not connected</div>
             </div>
             <div className="summary-card">
               <div className="num">{n('queued')}</div>
@@ -259,7 +259,7 @@ export default function Monitor() {
             {/* Live: only calls that are actually up right now. */}
             <section className="card">
               <h3>
-                On the line now <span className="muted small">({live.length})</span>
+                Active Calls <span className="muted small">({live.length})</span>
               </h3>
               <div className="table-wrap">
                 <table className="table">
@@ -267,8 +267,8 @@ export default function Monitor() {
                     <tr>
                       <th>Number</th>
                       <th>Name</th>
-                      <th>State</th>
-                      <th>Time</th>
+                      <th>Status</th>
+                      <th>Duration</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -278,7 +278,7 @@ export default function Monitor() {
                         <td>{c.name || '—'}</td>
                         <td>
                           <span className={`badge ${c.status === 'answered' ? 'ok' : 'info'}`}>
-                            {c.status === 'answered' ? 'On call' : 'Ringing…'}
+                            {c.status === 'answered' ? 'Connected' : 'Ringing'}
                           </span>
                         </td>
                         <td className="muted small">{mmss(now - new Date(c.at).getTime())}</td>
@@ -287,7 +287,7 @@ export default function Monitor() {
                     {live.length === 0 && (
                       <tr>
                         <td colSpan="4" className="muted">
-                          No calls in progress.
+                          No active calls at the moment.
                         </td>
                       </tr>
                     )}
@@ -299,7 +299,7 @@ export default function Monitor() {
             {/* Results: a proper chronological log of finished calls, newest first. */}
             <section className="card">
               <h3>
-                Recent results <span className="muted small">(newest first)</span>
+                Completed Calls <span className="muted small">(most recent first)</span>
               </h3>
               <div className="table-wrap">
                 <table className="table">
@@ -330,7 +330,7 @@ export default function Monitor() {
                     {log.length === 0 && (
                       <tr>
                         <td colSpan="4" className="muted">
-                          Waiting for the first result…
+                          No completed calls yet.
                         </td>
                       </tr>
                     )}
