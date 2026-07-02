@@ -354,9 +354,8 @@ export default function Monitor() {
                             {RESULT_LABEL[c.status] || c.status}
                           </span>
                           {c.attempt > 1 && (
-                            <span className="muted small"> · attempt {c.attempt}</span>
+                            <span className="muted small"> · retry {c.attempt - 1}</span>
                           )}
-                          {c.retrying && <span className="muted small"> · will retry</span>}
                         </td>
                       </tr>
                     ))}
