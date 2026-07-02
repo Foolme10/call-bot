@@ -215,7 +215,7 @@ export default function Monitor() {
         )}
         {selected && (
           <span className="muted small" style={{ alignSelf: 'center' }}>
-            up to {selected.max_concurrent} lines
+            up to {selected.cps} calls/sec
           </span>
         )}
       </div>

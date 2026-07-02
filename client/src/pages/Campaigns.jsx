@@ -221,7 +221,7 @@ export default function Campaigns() {
                   <span className={STATUS_CLASS[c.status] || 'badge'}>{c.status}</span>
                 </td>
                 <td>
-                  <span className="muted small">up to</span> {c.max_concurrent} at once
+                  <span className="muted small">up to</span> {c.cps} calls/sec
                 </td>
                 <td>
                   {c.completed}/{c.total_contacts}

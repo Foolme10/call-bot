@@ -109,7 +109,7 @@ export default function NewCampaign() {
       let msg = `Campaign created with ${s.valid} contacts`;
       if (s.invalid) msg += ` (${s.invalid} rows skipped — invalid numbers)`;
       if (d.pace)
-        msg += `\nDialing up to ${d.pace.maxConcurrent} calls at a time (~${d.pace.estMinutes} min to finish).`;
+        msg += `\nDialing at up to ${d.pace.cps} calls/sec (~${d.pace.estMinutes} min to finish).`;
       if (d.warning) msg += `\n\n${d.warning}`;
       alert(msg);
       navigate(scheduleType === 'now' ? '/monitor' : '/campaigns');
@@ -245,15 +245,13 @@ export default function NewCampaign() {
         <p className="muted small">
           Speed is set automatically from your list size so the campaign finishes in a reasonable
           time, and never goes above your trunk’s capacity
-          {pacing ? ` (up to ${pacing.maxConcurrent} lines, ${pacing.maxCps}/sec)` : ''}. Nothing to
-          configure.
+          {pacing ? ` (up to ${pacing.maxCps} calls/sec)` : ''}. Nothing to configure.
         </p>
         {estimate && preview && (
           <div className="pace-preview">
             <div>
               <strong>{Number(preview.totalRows).toLocaleString()}</strong> numbers → up to{' '}
-              <strong>{estimate.maxConcurrent}</strong> calls at once at{' '}
-              <strong>{estimate.cps}/sec</strong>
+              <strong>{estimate.cps}</strong> calls/sec
             </div>
             <div className="muted small">
               Estimated time to finish: about {estimate.estMinutes} minute
