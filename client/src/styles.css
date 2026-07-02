@@ -148,6 +148,8 @@ input:focus, select:focus { outline: none; border-color: var(--primary); }
   top: 0;
 }
 .table tbody tr:hover td { background: rgba(255,255,255,.02); }
+.table tbody tr.clickable { cursor: pointer; }
+.table tbody tr.clickable:hover td { background: rgba(255,255,255,.05); }
 .table.mini th, .table.mini td { padding: 6px 8px; font-size: 12px; white-space: normal; }
 .table .hl { color: var(--info); }
 .table .hl2 { color: var(--ok); }

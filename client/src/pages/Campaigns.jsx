@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 
+const PAGE_SIZE = 25;
+
 const STATUS_CLASS = {
   draft: 'badge',
   scheduled: 'badge info',
@@ -11,6 +13,29 @@ const STATUS_CLASS = {
   stopped: 'badge',
   failed: 'badge error',
 };
+
+const RETRY_OPTS = [
+  ['busy', 'Busy'],
+  ['no_answer', 'No Answer'],
+  ['congestion', 'Congestion'],
+  ['failed', 'Failed'],
+];
+
+// Labels for the per-status counts in the detail view. 'queued' reads
+// differently depending on whether the campaign can still dial it.
+function countLabel(key, finished) {
+  const labels = {
+    answered: 'Answered',
+    no_answer: 'No Answer',
+    busy: 'Busy',
+    failed: 'Failed',
+    congestion: 'Congestion',
+    machine: 'Answering Machine',
+    dialing: 'Dialing',
+    queued: finished ? 'Not Dialed' : 'Waiting',
+  };
+  return labels[key] || key;
+}
 
 // A UTC datetime from the API -> value for a <input type="datetime-local">, shown
 // in the user's local timezone (and read back the same way on save).
@@ -23,16 +48,21 @@ function toLocalInput(v) {
 
 export default function Campaigns() {
   const [campaigns, setCampaigns] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState(null); // { id, name, when } while editing a schedule
+  const [editing, setEditing] = useState(null); // full edit form for a draft/scheduled campaign
+  const [editLists, setEditLists] = useState(null); // { audios, callerIds } for the edit dropdowns
+  const [detail, setDetail] = useState(null); // { campaign, counts } for the clicked campaign
   const [rerunFor, setRerunFor] = useState(null); // campaign being re-run
   const [rerunScope, setRerunScope] = useState('all'); // 'all' | 'unreached'
 
-  async function load() {
+  async function load(p = page) {
     try {
-      const d = await api.get('/campaigns');
+      const d = await api.get(`/campaigns?page=${p}&pageSize=${PAGE_SIZE}`);
       setCampaigns(d.campaigns);
+      setTotal(d.total || d.campaigns.length);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -41,10 +71,12 @@ export default function Campaigns() {
   }
 
   useEffect(() => {
-    load();
-    const t = setInterval(load, 5000); // keep counts/status fresh
+    load(page);
+    const t = setInterval(() => load(page), 5000); // keep counts/status fresh
     return () => clearInterval(t);
-  }, []);
+  }, [page]);
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   async function control(id, action) {
     try {
@@ -80,21 +112,75 @@ export default function Campaigns() {
     }
   }
 
-  async function saveSchedule() {
+  // Click on a row: fetch the campaign's per-status counts and show a summary.
+  async function openDetail(c) {
     try {
-      if (editing.when) {
-        await api.patch(`/campaigns/${editing.id}/schedule`, {
-          scheduleType: 'scheduled',
-          scheduledAt: new Date(editing.when).toISOString(),
-        });
-      } else {
-        await api.patch(`/campaigns/${editing.id}/schedule`, { scheduleType: 'now' });
-      }
+      const d = await api.get(`/campaigns/${c.id}`);
+      setDetail(d);
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  // Edit: needs the full campaign row (retry settings aren't in the list) plus
+  // the audio / caller ID lists for the dropdowns.
+  async function openEdit(c) {
+    try {
+      const [d, cids, auds] = await Promise.all([
+        api.get(`/campaigns/${c.id}`),
+        api.get('/caller-ids'),
+        api.get('/audio'),
+      ]);
+      const cam = d.campaign;
+      setEditLists({
+        callerIds: cids.callerIds,
+        audios: auds.audio.filter((x) => x.status === 'ready'),
+      });
+      setEditing({
+        id: cam.id,
+        name: cam.name,
+        audioFileId: cam.audio_file_id || '',
+        callerIdId: cam.caller_id_id || '',
+        maxAttempts: cam.max_attempts || 1,
+        retryDelayMin: cam.retry_delay_min || 0,
+        retryOn: String(cam.retry_on || '').split(',').filter(Boolean),
+        amdEnabled: !!cam.amd_enabled,
+        when: toLocalInput(cam.scheduled_at),
+      });
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  async function saveEdit() {
+    try {
+      const body = {
+        name: editing.name,
+        audioFileId: Number(editing.audioFileId),
+        callerIdId: editing.callerIdId ? Number(editing.callerIdId) : null,
+        maxAttempts: Number(editing.maxAttempts),
+        retryDelayMin: Number(editing.retryDelayMin),
+        retryOn: editing.retryOn,
+        amdEnabled: editing.amdEnabled,
+        ...(editing.when
+          ? { scheduleType: 'scheduled', scheduledAt: new Date(editing.when).toISOString() }
+          : { scheduleType: 'now' }),
+      };
+      await api.patch(`/campaigns/${editing.id}`, body);
       setEditing(null);
       load();
     } catch (e) {
       alert(e.message);
     }
+  }
+
+  function toggleRetryOn(key) {
+    setEditing((prev) => ({
+      ...prev,
+      retryOn: prev.retryOn.includes(key)
+        ? prev.retryOn.filter((k) => k !== key)
+        : [...prev.retryOn, key],
+    }));
   }
 
   return (
@@ -126,7 +212,7 @@ export default function Campaigns() {
           </thead>
           <tbody>
             {campaigns.map((c) => (
-              <tr key={c.id}>
+              <tr key={c.id} className="clickable" onClick={() => openDetail(c)}>
                 <td>
                   <strong>{c.name}</strong>
                   <div className="muted small">{c.audio_name || 'No audio'}</div>
@@ -147,7 +233,7 @@ export default function Campaigns() {
                     ? new Date(c.scheduled_at).toLocaleString()
                     : 'Run now'}
                 </td>
-                <td className="actions">
+                <td className="actions" onClick={(e) => e.stopPropagation()}>
                   {['draft', 'paused', 'scheduled', 'stopped'].includes(c.status) && (
                     <button className="btn small ok" onClick={() => control(c.id, 'start')}>
                       Start
@@ -169,17 +255,8 @@ export default function Campaigns() {
                     </button>
                   )}
                   {['draft', 'scheduled'].includes(c.status) && (
-                    <button
-                      className="btn small"
-                      onClick={() =>
-                        setEditing({
-                          id: c.id,
-                          name: c.name,
-                          when: toLocalInput(c.scheduled_at),
-                        })
-                      }
-                    >
-                      Schedule
+                    <button className="btn small" onClick={() => openEdit(c)}>
+                      Edit
                     </button>
                   )}
                   {c.status !== 'running' && (
@@ -192,6 +269,97 @@ export default function Campaigns() {
             ))}
           </tbody>
         </table>
+        </div>
+      )}
+
+      {!loading && total > PAGE_SIZE && (
+        <div className="pager">
+          <button className="btn small" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+            ← Prev
+          </button>
+          <span className="muted">
+            Page {page} of {totalPages} · {total} campaigns
+          </span>
+          <button
+            className="btn small"
+            disabled={page >= totalPages}
+            onClick={() => setPage(page + 1)}
+          >
+            Next →
+          </button>
+        </div>
+      )}
+
+      {detail && (
+        <div className="modal-backdrop" onClick={() => setDetail(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>{detail.campaign.name}</h3>
+            <p>
+              <span className={STATUS_CLASS[detail.campaign.status] || 'badge'}>
+                {detail.campaign.status}
+              </span>
+            </p>
+
+            {['running', 'paused'].includes(detail.campaign.status) ? (
+              <>
+                <p className="muted">
+                  This campaign is in progress
+                  {detail.campaign.status === 'paused' ? ' (paused)' : ''}. Results will be
+                  available in Reports once it finishes.
+                </p>
+                <p>
+                  <Link className="btn" to="/monitor" onClick={() => setDetail(null)}>
+                    Watch in Live Monitor
+                  </Link>
+                </p>
+              </>
+            ) : ['completed', 'stopped'].includes(detail.campaign.status) ? (
+              <>
+                <table className="table">
+                  <tbody>
+                    {Object.entries(detail.counts).map(([k, n]) => (
+                      <tr key={k}>
+                        <td>{countLabel(k, true)}</td>
+                        <td>
+                          <strong>{n}</strong>
+                        </td>
+                      </tr>
+                    ))}
+                    <tr>
+                      <td>Total numbers</td>
+                      <td>
+                        <strong>{detail.campaign.total_contacts}</strong>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p className="muted small">
+                  {detail.campaign.started_at &&
+                    `Started ${new Date(detail.campaign.started_at).toLocaleString()}`}
+                  {detail.campaign.completed_at &&
+                    ` · Finished ${new Date(detail.campaign.completed_at).toLocaleString()}`}
+                </p>
+                <p>
+                  <Link className="btn" to="/reports" onClick={() => setDetail(null)}>
+                    Open full report
+                  </Link>
+                </p>
+              </>
+            ) : (
+              <p className="muted">
+                {detail.campaign.total_contacts} numbers ·{' '}
+                {detail.campaign.schedule_type === 'scheduled' && detail.campaign.scheduled_at
+                  ? `Scheduled for ${new Date(detail.campaign.scheduled_at).toLocaleString()}`
+                  : 'Starts when you press Start'}
+              </p>
+            )}
+
+            <div className="form-actions">
+              <button className="btn ghost" onClick={() => setDetail(null)}>
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -241,22 +409,103 @@ export default function Campaigns() {
         </div>
       )}
 
-      {editing && (
+      {editing && editLists && (
         <div className="modal-backdrop" onClick={() => setEditing(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Schedule — {editing.name}</h3>
-            <label>Run at (leave empty to run now)</label>
+            <h3>Edit campaign</h3>
+
+            <label>Name</label>
+            <input
+              value={editing.name}
+              onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+            />
+
+            <label>Audio message</label>
+            <select
+              value={editing.audioFileId}
+              onChange={(e) => setEditing({ ...editing, audioFileId: e.target.value })}
+            >
+              {editLists.audios.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+
+            <label>Caller ID</label>
+            <select
+              value={editing.callerIdId}
+              onChange={(e) => setEditing({ ...editing, callerIdId: e.target.value })}
+            >
+              <option value="">None (trunk default)</option>
+              {editLists.callerIds.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label ? `${c.label} — ${c.number}` : c.number}
+                </option>
+              ))}
+            </select>
+
+            <label>Attempts per number (1 = no retry)</label>
+            <select
+              value={editing.maxAttempts}
+              onChange={(e) => setEditing({ ...editing, maxAttempts: e.target.value })}
+            >
+              {[1, 2, 3, 4, 5].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+
+            {Number(editing.maxAttempts) > 1 && (
+              <>
+                <label>Wait between attempts (minutes)</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="1440"
+                  value={editing.retryDelayMin}
+                  onChange={(e) => setEditing({ ...editing, retryDelayMin: e.target.value })}
+                />
+
+                <label>Retry when the result was</label>
+                <div>
+                  {RETRY_OPTS.map(([k, lbl]) => (
+                    <label key={k} className="pick">
+                      <input
+                        type="checkbox"
+                        checked={editing.retryOn.includes(k)}
+                        onChange={() => toggleRetryOn(k)}
+                      />
+                      <span>{lbl}</span>
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
+
+            <label className="pick">
+              <input
+                type="checkbox"
+                checked={editing.amdEnabled}
+                onChange={(e) => setEditing({ ...editing, amdEnabled: e.target.checked })}
+              />
+              <span>Answering machine detection (skip voicemails)</span>
+            </label>
+
+            <label>Run at (leave empty to start manually)</label>
             <input
               type="datetime-local"
               value={editing.when}
               onChange={(e) => setEditing({ ...editing, when: e.target.value })}
             />
+
             <div className="form-actions">
               <button className="btn ghost" onClick={() => setEditing(null)}>
                 Cancel
               </button>
-              <button className="btn primary" onClick={saveSchedule}>
-                Save
+              <button className="btn primary" onClick={saveEdit}>
+                Save changes
               </button>
             </div>
           </div>

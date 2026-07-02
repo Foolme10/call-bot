@@ -9,7 +9,9 @@ const router = express.Router();
 router.use(requireAuth);
 
 const STATUS_LABEL = {
-  queued: 'Queued',
+  // Reports only exist for finished campaigns, where a 'queued' row means the
+  // campaign was stopped before this number's turn came up.
+  queued: 'Not Dialed',
   dialing: 'Dialing',
   answered: 'Answered',
   busy: 'Busy',
@@ -28,11 +30,23 @@ async function assertOwned(campaignId, uid) {
   return rows[0];
 }
 
+// Reports are a final document: only meaningful once no more dialing will
+// happen. Mid-run visibility belongs to the Live Monitor instead.
+function assertFinished(campaign) {
+  if (!['completed', 'stopped'].includes(campaign.status)) {
+    throw new ApiError(
+      409,
+      'Reports are available once the campaign has finished. Use Live Monitor to follow it in real time.'
+    );
+  }
+}
+
 // Paginated report rows + summary counts.
 router.get(
   '/campaigns/:id',
   asyncHandler(async (req, res) => {
     const campaign = await assertOwned(req.params.id, req.user.id);
+    assertFinished(campaign);
 
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const pageSize = Math.min(500, Math.max(1, parseInt(req.query.pageSize, 10) || 50));
@@ -87,6 +101,7 @@ router.get(
   '/campaigns/:id/export',
   asyncHandler(async (req, res) => {
     const campaign = await assertOwned(req.params.id, req.user.id);
+    assertFinished(campaign);
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader(

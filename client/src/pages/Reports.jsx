@@ -20,6 +20,7 @@ const HELP = {
   failed:
     'The call couldn’t be placed at all — usually a wrong, invalid, or blocked number, or the carrier rejected it. Re-running rarely helps these.',
   machine: 'An answering machine / voicemail was detected (only when detection is turned on).',
+  queued: 'The campaign was stopped before this number was dialed.',
 };
 const LEGEND_ORDER = ['answered', 'no_answer', 'busy', 'congestion', 'failed', 'machine'];
 
@@ -32,8 +33,15 @@ export default function Reports() {
   const [page, setPage] = useState(1);
   const [error, setError] = useState('');
 
+  // Reports are only available for finished campaigns; running ones belong to
+  // the Live Monitor.
   useEffect(() => {
-    api.get('/campaigns').then((d) => setCampaigns(d.campaigns)).catch((e) => setError(e.message));
+    api
+      .get('/campaigns?pageSize=200')
+      .then((d) =>
+        setCampaigns(d.campaigns.filter((c) => ['completed', 'stopped'].includes(c.status)))
+      )
+      .catch((e) => setError(e.message));
   }, []);
 
   async function load() {
@@ -73,13 +81,18 @@ export default function Reports() {
 
       <div className="filters">
         <select value={campaignId} onChange={(e) => { setPage(1); setCampaignId(e.target.value); }}>
-          <option value="">Select a campaign…</option>
+          <option value="">Select a finished campaign…</option>
           {campaigns.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
             </option>
           ))}
         </select>
+        {campaigns.length === 0 && !error && (
+          <span className="muted small" style={{ alignSelf: 'center' }}>
+            Reports become available once a campaign finishes.
+          </span>
+        )}
         {data && (
           <>
             <select value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }}>

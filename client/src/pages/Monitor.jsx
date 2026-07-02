@@ -52,7 +52,8 @@ export default function Monitor() {
 
   // Campaign list for the dropdown.
   useEffect(() => {
-    const load = () => api.get('/campaigns').then((d) => setCampaigns(d.campaigns)).catch(() => {});
+    const load = () =>
+      api.get('/campaigns?pageSize=200').then((d) => setCampaigns(d.campaigns)).catch(() => {});
     load();
     const t = setInterval(load, 8000);
     return () => clearInterval(t);

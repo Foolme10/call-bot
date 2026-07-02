@@ -35,10 +35,19 @@ async function getOwnedCampaign(id, uid) {
   return rows[0];
 }
 
-// List campaigns with rolled-up call counts.
+// List campaigns with rolled-up call counts. Paginated (default 25/page);
+// dropdown consumers (Monitor, Reports) pass a larger pageSize.
 router.get(
   '/',
   asyncHandler(async (req, res) => {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.min(200, Math.max(1, parseInt(req.query.pageSize, 10) || 25));
+    const offset = (page - 1) * pageSize;
+
+    const [{ n: total }] = await db.query(
+      'SELECT COUNT(*) AS n FROM campaigns WHERE user_id = :uid',
+      { uid: req.user.id }
+    );
     const rows = await db.query(
       `SELECT c.id, c.name, c.status, c.intensity_level, c.cps, c.max_concurrent,
               c.schedule_type, c.scheduled_at, c.total_contacts, c.created_at,
@@ -58,10 +67,11 @@ router.get(
                 FROM call_logs GROUP BY campaign_id
          ) s ON s.campaign_id = c.id
         WHERE c.user_id = :uid
-        ORDER BY c.created_at DESC`,
-      { uid: req.user.id }
+        ORDER BY c.created_at DESC
+        LIMIT :limit OFFSET :offset`,
+      { uid: req.user.id, limit: pageSize, offset }
     );
-    res.json({ campaigns: rows });
+    res.json({ campaigns: rows, total: Number(total), page, pageSize });
   })
 );
 
@@ -295,6 +305,96 @@ router.post(
     });
     await dialer.rerunCampaign(campaign.id, scope);
     res.json({ ok: true, status: 'running', scope, pace });
+  })
+);
+
+// Edit a campaign that hasn't run yet (draft/scheduled): name, audio, caller
+// ID, retry settings, AMD, and schedule. The contact list itself can't change —
+// create a new campaign for a different list. Pace isn't recomputed (it depends
+// only on list size and trunk caps, neither of which changes here).
+const editSchema = z.object({
+  name: z.string().min(1).max(128).optional(),
+  callerIdId: z.coerce.number().int().positive().nullable().optional(),
+  audioFileId: z.coerce.number().int().positive().optional(),
+  maxAttempts: z.coerce.number().int().min(1).max(5).optional(),
+  retryDelayMin: z.coerce.number().int().min(0).max(1440).optional(),
+  retryOn: z.array(z.enum(['busy', 'no_answer', 'congestion', 'failed'])).optional(),
+  amdEnabled: z.boolean().optional(),
+  scheduleType: z.enum(['now', 'scheduled']).optional(),
+  scheduledAt: z.string().datetime().optional(),
+});
+router.patch(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    const campaign = await getOwnedCampaign(req.params.id, req.user.id);
+    if (!['draft', 'scheduled'].includes(campaign.status)) {
+      throw new ApiError(409, 'Only campaigns that have not started can be edited');
+    }
+    const parsed = editSchema.safeParse(req.body);
+    if (!parsed.success) throw new ApiError(400, 'Invalid campaign data', parsed.error.flatten());
+    const d = parsed.data;
+
+    if (d.audioFileId !== undefined) {
+      const audio = await db.query(
+        "SELECT id FROM audio_files WHERE id = :id AND user_id = :uid AND status = 'ready'",
+        { id: d.audioFileId, uid: req.user.id }
+      );
+      if (!audio[0]) throw new ApiError(400, 'Audio file not found or not ready');
+    }
+    if (d.callerIdId) {
+      const cid = await db.query('SELECT id FROM caller_ids WHERE id = :id AND user_id = :uid', {
+        id: d.callerIdId,
+        uid: req.user.id,
+      });
+      if (!cid[0]) throw new ApiError(400, 'Caller ID not found');
+    }
+
+    const sets = [];
+    const params = { id: campaign.id };
+    if (d.name !== undefined) {
+      sets.push('name = :name');
+      params.name = d.name;
+    }
+    if (d.callerIdId !== undefined) {
+      sets.push('caller_id_id = :callerId');
+      params.callerId = d.callerIdId || null;
+    }
+    if (d.audioFileId !== undefined) {
+      sets.push('audio_file_id = :audio');
+      params.audio = d.audioFileId;
+    }
+    if (d.maxAttempts !== undefined) {
+      sets.push('max_attempts = :maxAttempts');
+      params.maxAttempts = d.maxAttempts;
+    }
+    if (d.retryDelayMin !== undefined) {
+      sets.push('retry_delay_min = :retryDelay');
+      params.retryDelay = d.retryDelayMin;
+    }
+    if (d.retryOn !== undefined) {
+      // An empty selection means "never retry" — coherent with maxAttempts = 1.
+      sets.push('retry_on = :retryOn');
+      params.retryOn = d.retryOn.join(',');
+    }
+    if (d.amdEnabled !== undefined) {
+      sets.push('amd_enabled = :amd');
+      params.amd = d.amdEnabled ? 1 : 0;
+    }
+    if (d.scheduleType === 'scheduled') {
+      if (!d.scheduledAt) throw new ApiError(400, 'scheduledAt is required');
+      const when = new Date(d.scheduledAt);
+      if (Number.isNaN(when.getTime())) throw new ApiError(400, 'Invalid scheduledAt');
+      sets.push("schedule_type = 'scheduled'", 'scheduled_at = :sched', "status = 'scheduled'");
+      params.sched = when.toISOString().slice(0, 19).replace('T', ' ');
+    } else if (d.scheduleType === 'now') {
+      // Back to manual: cleared schedule, waits for the Start button.
+      sets.push("schedule_type = 'now'", 'scheduled_at = NULL', "status = 'draft'");
+    }
+    if (sets.length === 0) throw new ApiError(400, 'Nothing to update');
+
+    await db.execute(`UPDATE campaigns SET ${sets.join(', ')} WHERE id = :id`, params);
+    const fresh = await getOwnedCampaign(campaign.id, req.user.id);
+    res.json({ ok: true, campaign: fresh });
   })
 );
 
