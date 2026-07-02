@@ -158,6 +158,12 @@ export default function Monitor() {
             delete nx[id];
             return nx;
           });
+          // An answered call was already logged when it was answered — its
+          // hangup event (also status 'answered') must not add a second row.
+          if (m.status === 'answered') {
+            if (seenAnswered.current.has(id)) return;
+            seenAnswered.current.add(id);
+          }
           setLog((prev) =>
             [{ callLogId: id, name, phone, status: m.status, at: m.at, retrying: m.retrying }, ...prev].slice(0, 80)
           );

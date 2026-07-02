@@ -183,6 +183,10 @@ class Runner {
     activeCalls.set(channelId, {
       campaignId: this.id,
       callLogId: row.id,
+      // Carried on every monitor event so the UI never shows a blank number,
+      // even when it subscribed mid-campaign and missed the 'dialing' event.
+      name: row.name,
+      phone: row.phone,
       answered: false,
       media: this.media,
       runner: this,
@@ -260,6 +264,8 @@ function registerHandlers(client) {
         monitor.publish(call.campaignId, {
           type: 'call',
           callLogId: call.callLogId,
+          name: call.name,
+          phone: call.phone,
           status: 'machine',
           at: new Date().toISOString(),
         });
@@ -278,6 +284,8 @@ function registerHandlers(client) {
     monitor.publish(call.campaignId, {
       type: 'call',
       callLogId: call.callLogId,
+      name: call.name,
+      phone: call.phone,
       status: 'answered',
       at: new Date().toISOString(),
     });
@@ -351,6 +359,8 @@ async function finalizeCall(channelId, cause, forcedStatus) {
     monitor.publish(call.campaignId, {
       type: 'call',
       callLogId: call.callLogId,
+      name: call.name,
+      phone: call.phone,
       status,
       retrying: true,
       attempt: call.attempt,
@@ -374,6 +384,8 @@ async function finalizeCall(channelId, cause, forcedStatus) {
   monitor.publish(call.campaignId, {
     type: 'call',
     callLogId: call.callLogId,
+    name: call.name,
+    phone: call.phone,
     status,
     attempt: call.attempt,
     at: new Date().toISOString(),
