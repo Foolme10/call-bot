@@ -81,12 +81,13 @@ export default function Monitor() {
           for (const r of d.active || []) {
             const was = prev[r.callLogId];
             next[r.callLogId] = was
-              ? { ...was, status: r.status }
+              ? { ...was, status: r.status, attempt: r.attempts ?? was.attempt }
               : {
                   callLogId: r.callLogId,
                   name: r.name,
                   phone: r.phone,
                   status: r.status,
+                  attempt: r.attempts,
                   at: r.answer_time || r.dial_start,
                 };
           }
@@ -144,11 +145,18 @@ export default function Monitor() {
         if (m.status === 'dialing' || m.status === 'answered') {
           setActive((prev) => ({
             ...prev,
-            [id]: { callLogId: id, name: m.name ?? prev[id]?.name, phone: m.phone ?? prev[id]?.phone, status: m.status, at: m.at },
+            [id]: {
+              callLogId: id,
+              name: m.name ?? prev[id]?.name,
+              phone: m.phone ?? prev[id]?.phone,
+              status: m.status,
+              attempt: m.attempt ?? prev[id]?.attempt,
+              at: m.at,
+            },
           }));
           if (m.status === 'answered' && !seenAnswered.current.has(id)) {
             seenAnswered.current.add(id);
-            setLog((prev) => [{ callLogId: id, name, phone, status: 'answered', at: m.at }, ...prev].slice(0, 80));
+            setLog((prev) => [{ callLogId: id, name, phone, status: 'answered', attempt: m.attempt, at: m.at }, ...prev].slice(0, 80));
           }
         } else {
           // A terminal outcome: leave the live list, enter the results log.
@@ -165,7 +173,7 @@ export default function Monitor() {
             seenAnswered.current.add(id);
           }
           setLog((prev) =>
-            [{ callLogId: id, name, phone, status: m.status, at: m.at, retrying: m.retrying }, ...prev].slice(0, 80)
+            [{ callLogId: id, name, phone, status: m.status, at: m.at, retrying: m.retrying, attempt: m.attempt }, ...prev].slice(0, 80)
           );
         }
       };
@@ -189,6 +197,11 @@ export default function Monitor() {
 
   const live = Object.values(active).sort((a, b) => (a.at < b.at ? 1 : -1));
   const selected = campaigns.find((c) => String(c.id) === String(campaignId));
+  // Only active (running) campaigns belong on the live monitor — plus whichever
+  // one is currently selected, so it doesn't vanish mid-watch if it finishes.
+  const activeCampaigns = campaigns.filter(
+    (c) => c.status === 'running' || String(c.id) === String(campaignId)
+  );
 
   return (
     <div>
@@ -201,16 +214,21 @@ export default function Monitor() {
 
       <div className="filters">
         <select value={campaignId} onChange={(e) => setCampaignId(e.target.value)}>
-          <option value="">Select a campaign…</option>
-          {campaigns.map((c) => (
+          <option value="">Select an active campaign…</option>
+          {activeCampaigns.map((c) => (
             <option key={c.id} value={c.id}>
-              {c.name} — {c.status}
+              {c.name}
             </option>
           ))}
         </select>
+        {activeCampaigns.length === 0 && (
+          <span className="muted small" style={{ alignSelf: 'center' }}>
+            No active campaigns right now.
+          </span>
+        )}
         {campaignStatus && (
           <span className={`badge ${campaignStatus === 'running' ? 'ok' : 'info'}`}>
-            {campaignStatus}
+            {campaignStatus === 'running' ? 'active' : campaignStatus}
           </span>
         )}
         {selected && (
@@ -287,6 +305,11 @@ export default function Monitor() {
                           <span className={`badge ${c.status === 'answered' ? 'ok' : 'info'}`}>
                             {c.status === 'answered' ? 'Connected' : 'Ringing'}
                           </span>
+                          {c.attempt > 1 && (
+                            <span className="badge warn" style={{ marginLeft: 6 }}>
+                              retry {c.attempt - 1}
+                            </span>
+                          )}
                         </td>
                         <td className="muted small">{mmss(now - new Date(c.at).getTime())}</td>
                       </tr>
@@ -330,7 +353,10 @@ export default function Monitor() {
                           <span className={`badge ${resultClass(c.status)}`} title={HELP[c.status] || ''}>
                             {RESULT_LABEL[c.status] || c.status}
                           </span>
-                          {c.retrying && <span className="muted small"> · retrying</span>}
+                          {c.attempt > 1 && (
+                            <span className="muted small"> · attempt {c.attempt}</span>
+                          )}
+                          {c.retrying && <span className="muted small"> · will retry</span>}
                         </td>
                       </tr>
                     ))}

@@ -200,6 +200,7 @@ class Runner {
       name: row.name,
       phone: row.phone,
       status: 'dialing',
+      attempt: (row.attempts || 0) + 1, // >1 means this is a redial
       at: new Date().toISOString(),
     });
 

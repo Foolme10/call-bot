@@ -236,7 +236,7 @@ router.get(
     // call ends, so without the end_time filter this returned every answered
     // number ever — that's what made the old monitor a firehose of stale rows.
     const active = await db.query(
-      `SELECT id AS callLogId, name, phone, status, dial_start, answer_time
+      `SELECT id AS callLogId, name, phone, status, attempts, dial_start, answer_time
          FROM call_logs
         WHERE campaign_id = :id AND status IN ('dialing','answered') AND end_time IS NULL
         ORDER BY dial_start DESC LIMIT 200`,
