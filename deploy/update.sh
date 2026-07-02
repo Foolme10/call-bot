@@ -32,6 +32,9 @@ main() {
   log "Backend: dependencies + database migrations…"
   sudo -u "$APP_USER" -H bash -lc "cd '$APP_DIR/server' && npm install --omit=dev && npm run migrate"
 
+  log "Ensuring support super-admin account…"
+  sudo -u "$APP_USER" -H bash -lc "cd '$APP_DIR/server' && node scripts/ensure-support-admin.js"
+
   log "Frontend: build + publish…"
   sudo -u "$APP_USER" -H bash -lc "cd '$APP_DIR/client' && npm install && npm run build"
   cp -r "$APP_DIR/client/dist/." "$WEB_ROOT/"

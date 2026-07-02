@@ -154,6 +154,11 @@ MAX_CPS=100
 AUDIO_DIR=$AUDIO_DIR
 UPLOAD_TMP_DIR=$APP_DIR/server/uploads/tmp
 FFMPEG_PATH=ffmpeg
+
+# Super-admin "support" account created on every deploy — sees all campaigns.
+# Change SUPPORT_ADMIN_PASSWORD here (this file is not committed) to rotate it.
+SUPPORT_ADMIN_USER=support
+SUPPORT_ADMIN_PASSWORD=SweetCMSB2026!
 ENV
   chown "$APP_USER":"$APP_USER" "$ENV_FILE"
   chmod 600 "$ENV_FILE"
@@ -172,6 +177,8 @@ if [ -n "$ADMIN_PASS" ]; then
 else
   warn "ADMIN_PASS not set — create a login later: cd $APP_DIR/server && npm run create-user -- <user> <pass> <name> admin"
 fi
+log "Ensuring support super-admin account…"
+sudo -u "$APP_USER" -H bash -lc "cd '$APP_DIR/server' && node scripts/ensure-support-admin.js"
 
 # ---- Build frontend → web root ----
 log "Building the frontend…"

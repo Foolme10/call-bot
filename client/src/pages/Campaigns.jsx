@@ -52,12 +52,14 @@ export default function Campaigns() {
   const [rerunFor, setRerunFor] = useState(null); // { ...campaign, counts } being re-run
   const [rerunScope, setRerunScope] = useState('all'); // 'all' | 'unreached'
   const [rerunStatuses, setRerunStatuses] = useState(RERUN_DEFAULT); // chosen outcomes for 'unreached'
+  const [isAdmin, setIsAdmin] = useState(false); // support super-user: sees all users' campaigns
 
   async function load(p = page) {
     try {
       const d = await api.get(`/campaigns?page=${p}&pageSize=${PAGE_SIZE}`);
       setCampaigns(d.campaigns);
       setTotal(d.total || d.campaigns.length);
+      setIsAdmin(!!d.isAdmin);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -153,6 +155,7 @@ export default function Campaigns() {
           <thead>
             <tr>
               <th>Name</th>
+              {isAdmin && <th>Owner</th>}
               <th>Status</th>
               <th>Pace</th>
               <th>Progress</th>
@@ -168,6 +171,7 @@ export default function Campaigns() {
                   <strong>{c.name}</strong>
                   <div className="muted small">{c.audio_name || 'No audio'}</div>
                 </td>
+                {isAdmin && <td className="muted small">{c.owner || '—'}</td>}
                 <td>
                   <span className={STATUS_CLASS[c.status] || 'badge'}>{c.status}</span>
                 </td>

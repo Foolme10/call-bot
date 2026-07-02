@@ -21,10 +21,13 @@ const STATUS_LABEL = {
   machine: 'Answering Machine',
 };
 
-async function assertOwned(campaignId, uid) {
+// Admins (the 'support' super-user) can report on any campaign; others only
+// their own.
+async function assertOwned(campaignId, user) {
+  const isAdmin = user.role === 'admin';
   const rows = await db.query(
-    'SELECT id, name, status FROM campaigns WHERE id = :id AND user_id = :uid',
-    { id: campaignId, uid }
+    `SELECT id, name, status FROM campaigns WHERE id = :id ${isAdmin ? '' : 'AND user_id = :uid'}`,
+    { id: campaignId, uid: user.id }
   );
   if (!rows[0]) throw new ApiError(404, 'Campaign not found');
   return rows[0];
@@ -45,7 +48,7 @@ function assertFinished(campaign) {
 router.get(
   '/campaigns/:id',
   asyncHandler(async (req, res) => {
-    const campaign = await assertOwned(req.params.id, req.user.id);
+    const campaign = await assertOwned(req.params.id, req.user);
     assertFinished(campaign);
 
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
@@ -100,7 +103,7 @@ router.get(
 router.get(
   '/campaigns/:id/export',
   asyncHandler(async (req, res) => {
-    const campaign = await assertOwned(req.params.id, req.user.id);
+    const campaign = await assertOwned(req.params.id, req.user);
     assertFinished(campaign);
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');

@@ -26,11 +26,14 @@ router.get('/meta/pace', (req, res) => {
   res.json(config.autoPace(count));
 });
 
-async function getOwnedCampaign(id, uid) {
-  const rows = await db.query('SELECT * FROM campaigns WHERE id = :id AND user_id = :uid', {
-    id,
-    uid,
-  });
+// Fetch a campaign the requester is allowed to touch. Admins (the 'support'
+// super-user) can reach every campaign; everyone else only their own.
+async function getOwnedCampaign(id, user) {
+  const isAdmin = user.role === 'admin';
+  const rows = await db.query(
+    `SELECT * FROM campaigns WHERE id = :id ${isAdmin ? '' : 'AND user_id = :uid'}`,
+    { id, uid: user.id }
+  );
   if (!rows[0]) throw new ApiError(404, 'Campaign not found');
   return rows[0];
 }
@@ -44,8 +47,13 @@ router.get(
     const pageSize = Math.min(200, Math.max(1, parseInt(req.query.pageSize, 10) || 25));
     const offset = (page - 1) * pageSize;
 
+    // Admins (the 'support' super-user) see every user's campaigns; others only
+    // their own. `owner` is exposed so an admin can tell whose campaign it is.
+    const isAdmin = req.user.role === 'admin';
+    const scope = isAdmin ? '' : 'WHERE c.user_id = :uid';
+
     const [{ n: total }] = await db.query(
-      'SELECT COUNT(*) AS n FROM campaigns WHERE user_id = :uid',
+      `SELECT COUNT(*) AS n FROM campaigns c ${scope}`,
       { uid: req.user.id }
     );
     const rows = await db.query(
@@ -53,12 +61,14 @@ router.get(
               c.schedule_type, c.scheduled_at, c.total_contacts, c.created_at,
               c.started_at, c.completed_at,
               ci.label AS caller_label, ci.number AS caller_number, a.name AS audio_name,
+              u.username AS owner,
               COALESCE(s.total, 0)    AS dialed,
               COALESCE(s.answered, 0) AS answered,
               COALESCE(s.completed, 0) AS completed
          FROM campaigns c
          LEFT JOIN caller_ids ci ON ci.id = c.caller_id_id
          LEFT JOIN audio_files a ON a.id = c.audio_file_id
+         LEFT JOIN users u ON u.id = c.user_id
          LEFT JOIN (
               SELECT campaign_id,
                      COUNT(*) AS total,
@@ -66,12 +76,12 @@ router.get(
                      SUM(status NOT IN ('queued','dialing')) AS completed
                 FROM call_logs GROUP BY campaign_id
          ) s ON s.campaign_id = c.id
-        WHERE c.user_id = :uid
+        ${scope}
         ORDER BY c.created_at DESC
         LIMIT :limit OFFSET :offset`,
       { uid: req.user.id, limit: pageSize, offset }
     );
-    res.json({ campaigns: rows, total: Number(total), page, pageSize });
+    res.json({ campaigns: rows, total: Number(total), page, pageSize, isAdmin });
   })
 );
 
@@ -202,7 +212,7 @@ router.post(
       }
     }
 
-    const fresh = await getOwnedCampaign(campaignId, req.user.id);
+    const fresh = await getOwnedCampaign(campaignId, req.user);
     res.status(201).json({
       campaign: fresh,
       contactsSummary: { total, valid, invalid },
@@ -216,7 +226,7 @@ router.post(
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const campaign = await getOwnedCampaign(req.params.id, req.user.id);
+    const campaign = await getOwnedCampaign(req.params.id, req.user);
     const counts = await db.query(
       `SELECT status, COUNT(*) AS n FROM call_logs WHERE campaign_id = :id GROUP BY status`,
       { id: campaign.id }
@@ -231,7 +241,7 @@ router.get(
 router.get(
   '/:id/monitor',
   asyncHandler(async (req, res) => {
-    const campaign = await getOwnedCampaign(req.params.id, req.user.id);
+    const campaign = await getOwnedCampaign(req.params.id, req.user);
     // Only calls that are truly still up. 'answered' stays as the status after a
     // call ends, so without the end_time filter this returned every answered
     // number ever — that's what made the old monitor a firehose of stale rows.
@@ -256,7 +266,7 @@ router.get(
 router.post(
   '/:id/start',
   asyncHandler(async (req, res) => {
-    const campaign = await getOwnedCampaign(req.params.id, req.user.id);
+    const campaign = await getOwnedCampaign(req.params.id, req.user);
     if (['running', 'completed'].includes(campaign.status)) {
       throw new ApiError(409, `Campaign is already ${campaign.status}`);
     }
@@ -268,7 +278,7 @@ router.post(
 router.post(
   '/:id/pause',
   asyncHandler(async (req, res) => {
-    const campaign = await getOwnedCampaign(req.params.id, req.user.id);
+    const campaign = await getOwnedCampaign(req.params.id, req.user);
     if (campaign.status !== 'running') throw new ApiError(409, 'Campaign is not running');
     await dialer.pauseCampaign(campaign.id);
     res.json({ ok: true, status: 'paused' });
@@ -278,7 +288,7 @@ router.post(
 router.post(
   '/:id/stop',
   asyncHandler(async (req, res) => {
-    const campaign = await getOwnedCampaign(req.params.id, req.user.id);
+    const campaign = await getOwnedCampaign(req.params.id, req.user);
     await dialer.stopCampaign(campaign.id);
     res.json({ ok: true, status: 'stopped' });
   })
@@ -291,7 +301,7 @@ router.post(
 router.post(
   '/:id/rerun',
   asyncHandler(async (req, res) => {
-    const campaign = await getOwnedCampaign(req.params.id, req.user.id);
+    const campaign = await getOwnedCampaign(req.params.id, req.user);
     if (['running', 'paused', 'scheduled'].includes(campaign.status)) {
       throw new ApiError(409, 'Campaign is still active — stop it first');
     }
@@ -327,7 +337,7 @@ const editSchema = z.object({
 router.patch(
   '/:id',
   asyncHandler(async (req, res) => {
-    const campaign = await getOwnedCampaign(req.params.id, req.user.id);
+    const campaign = await getOwnedCampaign(req.params.id, req.user);
     if (!['draft', 'scheduled'].includes(campaign.status)) {
       throw new ApiError(409, 'Only campaigns that have not started can be edited');
     }
@@ -394,7 +404,7 @@ router.patch(
     if (sets.length === 0) throw new ApiError(400, 'Nothing to update');
 
     await db.execute(`UPDATE campaigns SET ${sets.join(', ')} WHERE id = :id`, params);
-    const fresh = await getOwnedCampaign(campaign.id, req.user.id);
+    const fresh = await getOwnedCampaign(campaign.id, req.user);
     res.json({ ok: true, campaign: fresh });
   })
 );
@@ -407,7 +417,7 @@ const scheduleSchema = z.object({
 router.patch(
   '/:id/schedule',
   asyncHandler(async (req, res) => {
-    const campaign = await getOwnedCampaign(req.params.id, req.user.id);
+    const campaign = await getOwnedCampaign(req.params.id, req.user);
     if (!['draft', 'scheduled'].includes(campaign.status)) {
       throw new ApiError(409, 'Can only change the schedule before a campaign runs — use Re-run for finished ones');
     }
@@ -438,7 +448,7 @@ router.patch(
 router.delete(
   '/:id',
   asyncHandler(async (req, res) => {
-    const campaign = await getOwnedCampaign(req.params.id, req.user.id);
+    const campaign = await getOwnedCampaign(req.params.id, req.user);
     if (campaign.status === 'running') throw new ApiError(409, 'Stop the campaign before deleting');
     await db.execute('DELETE FROM campaigns WHERE id = :id', { id: campaign.id });
     res.json({ ok: true });
