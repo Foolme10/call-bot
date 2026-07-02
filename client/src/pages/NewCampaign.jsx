@@ -1,8 +1,16 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api.js';
 
 const guess = (cols, re) => cols.find((c) => re.test(c)) || '';
+
+// A UTC datetime from the API -> value for <input type="datetime-local">.
+function toLocalInput(v) {
+  if (!v) return '';
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return '';
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
 
 const RETRY_OUTCOMES = [
   { v: 'busy', label: 'Busy' },
@@ -13,6 +21,9 @@ const RETRY_OUTCOMES = [
 
 export default function NewCampaign() {
   const navigate = useNavigate();
+  const { id } = useParams();
+  const editMode = Boolean(id); // /campaigns/:id/edit reuses this form to edit
+  const [existingContacts, setExistingContacts] = useState(null); // list size when editing
   const [name, setName] = useState('');
   const [callerIds, setCallerIds] = useState([]);
   const [audios, setAudios] = useState([]);
@@ -52,6 +63,30 @@ export default function NewCampaign() {
       .catch((e) => setError(e.message));
   }, []);
 
+  // Edit mode: load the campaign and prefill the form. The contact list can't
+  // be changed here (create a new campaign for a different list).
+  useEffect(() => {
+    if (!editMode) return;
+    api
+      .get(`/campaigns/${id}`)
+      .then(({ campaign: cam }) => {
+        setName(cam.name || '');
+        setAudioFileId(cam.audio_file_id ? String(cam.audio_file_id) : '');
+        setCallerIdId(cam.caller_id_id ? String(cam.caller_id_id) : '');
+        setMaxAttempts(cam.max_attempts || 1);
+        setRetryDelayMin(cam.retry_delay_min || 5);
+        setRetryOn(String(cam.retry_on || '').split(',').filter(Boolean));
+        setScheduleType(cam.schedule_type === 'scheduled' ? 'scheduled' : 'now');
+        setScheduledAt(toLocalInput(cam.scheduled_at));
+        setExistingContacts(cam.total_contacts);
+        api
+          .get(`/campaigns/meta/pace?count=${cam.total_contacts}`)
+          .then(setEstimate)
+          .catch(() => {});
+      })
+      .catch((e) => setError(e.message));
+  }, [editMode, id]);
+
   async function onFile(e) {
     const file = e.target.files[0];
     if (!file) return;
@@ -81,14 +116,34 @@ export default function NewCampaign() {
   async function onSubmit(e) {
     e.preventDefault();
     setError('');
-    if (!preview) return setError('Upload a contact list first.');
-    if (!numberColumn) return setError('Choose which column holds the phone number.');
     if (!audioFileId) return setError('Choose an audio recording to play.');
     if (scheduleType === 'scheduled' && !scheduledAt)
       return setError('Pick a date and time for the scheduled campaign.');
+    if (!editMode) {
+      if (!preview) return setError('Upload a contact list first.');
+      if (!numberColumn) return setError('Choose which column holds the phone number.');
+    }
 
     setBusy(true);
     try {
+      if (editMode) {
+        const body = {
+          name,
+          callerIdId: callerIdId ? Number(callerIdId) : null,
+          audioFileId: Number(audioFileId),
+          maxAttempts: Number(maxAttempts),
+          ...(Number(maxAttempts) > 1
+            ? { retryDelayMin: Number(retryDelayMin), retryOn }
+            : {}),
+          ...(scheduleType === 'scheduled'
+            ? { scheduleType: 'scheduled', scheduledAt: new Date(scheduledAt).toISOString() }
+            : { scheduleType: 'now' }),
+        };
+        await api.patch(`/campaigns/${id}`, body);
+        navigate('/campaigns');
+        return;
+      }
+
       const body = {
         name,
         callerIdId: callerIdId ? Number(callerIdId) : null,
@@ -121,7 +176,7 @@ export default function NewCampaign() {
   return (
     <form onSubmit={onSubmit} className="form-page">
       <div className="page-head">
-        <h2>New campaign</h2>
+        <h2>{editMode ? 'Campaign settings' : 'New campaign'}</h2>
       </div>
       {error && <div className="alert error" style={{ whiteSpace: 'pre-wrap' }}>{error}</div>}
 
@@ -132,6 +187,19 @@ export default function NewCampaign() {
 
       <section className="card">
         <h3>2. Contact list</h3>
+        {editMode ? (
+          <p className="muted small">
+            {existingContacts != null ? (
+              <>
+                <strong>{Number(existingContacts).toLocaleString()}</strong> numbers. The contact
+                list can’t be changed — create a new campaign to dial a different list.
+              </>
+            ) : (
+              'Loading…'
+            )}
+          </p>
+        ) : (
+        <>
         <p className="muted small">
           Upload a CSV or Excel file. Extra columns are fine — you’ll pick which ones to use.
         </p>
@@ -190,6 +258,8 @@ export default function NewCampaign() {
             </div>
           </div>
         )}
+        </>
+        )}
       </section>
 
       <section className="card">
@@ -231,11 +301,13 @@ export default function NewCampaign() {
           time, and never goes above your trunk’s capacity
           {pacing ? ` (up to ${pacing.maxCps} calls/sec)` : ''}. Nothing to configure.
         </p>
-        {estimate && preview && (
+        {estimate && (preview || (editMode && existingContacts != null)) && (
           <div className="pace-preview">
             <div>
-              <strong>{Number(preview.totalRows).toLocaleString()}</strong> numbers → up to{' '}
-              <strong>{estimate.cps}</strong> calls/sec
+              <strong>
+                {Number(preview ? preview.totalRows : existingContacts).toLocaleString()}
+              </strong>{' '}
+              numbers → up to <strong>{estimate.cps}</strong> calls/sec
             </div>
             <div className="muted small">
               Estimated time to finish: about {estimate.estMinutes} minute
@@ -326,7 +398,13 @@ export default function NewCampaign() {
           Cancel
         </button>
         <button className="btn primary" disabled={busy}>
-          {busy ? 'Creating…' : scheduleType === 'now' ? 'Create & start' : 'Create & schedule'}
+          {busy
+            ? 'Saving…'
+            : editMode
+            ? 'Save changes'
+            : scheduleType === 'now'
+            ? 'Create & start'
+            : 'Create & schedule'}
         </button>
       </div>
     </form>

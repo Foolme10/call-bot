@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 
 const PAGE_SIZE = 25;
@@ -14,12 +14,16 @@ const STATUS_CLASS = {
   failed: 'badge error',
 };
 
-const RETRY_OPTS = [
+// Outcomes a "re-run unreached" can redial, with the call_logs status they map
+// to. 'answered' and 'machine' are the reached ones and are never offered.
+const RERUN_OUTCOMES = [
   ['busy', 'Busy'],
   ['no_answer', 'No Answer'],
-  ['congestion', 'Congestion'],
   ['failed', 'Failed'],
+  ['congestion', 'Congestion'],
+  ['queued', 'Not Dialed'],
 ];
+const RERUN_DEFAULT = RERUN_OUTCOMES.map(([k]) => k);
 
 // Labels for the per-status counts in the detail view. 'queued' reads
 // differently depending on whether the campaign can still dial it.
@@ -37,26 +41,17 @@ function countLabel(key, finished) {
   return labels[key] || key;
 }
 
-// A UTC datetime from the API -> value for a <input type="datetime-local">, shown
-// in the user's local timezone (and read back the same way on save).
-function toLocalInput(v) {
-  if (!v) return '';
-  const d = new Date(v);
-  if (Number.isNaN(d.getTime())) return '';
-  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-}
-
 export default function Campaigns() {
+  const navigate = useNavigate();
   const [campaigns, setCampaigns] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState(null); // full edit form for a draft/scheduled campaign
-  const [editLists, setEditLists] = useState(null); // { audios, callerIds } for the edit dropdowns
   const [detail, setDetail] = useState(null); // { campaign, counts } for the clicked campaign
-  const [rerunFor, setRerunFor] = useState(null); // campaign being re-run
+  const [rerunFor, setRerunFor] = useState(null); // { ...campaign, counts } being re-run
   const [rerunScope, setRerunScope] = useState('all'); // 'all' | 'unreached'
+  const [rerunStatuses, setRerunStatuses] = useState(RERUN_DEFAULT); // chosen outcomes for 'unreached'
 
   async function load(p = page) {
     try {
@@ -97,19 +92,36 @@ export default function Campaigns() {
     }
   }
 
-  function openRerun(c) {
+  // Open the re-run dialog: fetch per-status counts so we can show how many
+  // numbers each choice will dial.
+  async function openRerun(c) {
     setRerunScope('all');
-    setRerunFor(c);
+    setRerunStatuses(RERUN_DEFAULT);
+    setRerunFor(c); // show immediately; counts fill in when the fetch returns
+    try {
+      const d = await api.get(`/campaigns/${c.id}`);
+      setRerunFor({ ...c, counts: d.counts });
+    } catch (_e) {
+      /* keep the dialog open without counts */
+    }
   }
 
   async function doRerun() {
     try {
-      await api.post(`/campaigns/${rerunFor.id}/rerun`, { scope: rerunScope });
+      const body = { scope: rerunScope };
+      if (rerunScope === 'unreached') body.statuses = rerunStatuses;
+      await api.post(`/campaigns/${rerunFor.id}/rerun`, body);
       setRerunFor(null);
       load();
     } catch (e) {
       alert(e.message);
     }
+  }
+
+  function toggleRerunStatus(key) {
+    setRerunStatuses((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+    );
   }
 
   // Click on a row: fetch the campaign's per-status counts and show a summary.
@@ -120,65 +132,6 @@ export default function Campaigns() {
     } catch (e) {
       alert(e.message);
     }
-  }
-
-  // Edit: needs the full campaign row (retry settings aren't in the list) plus
-  // the audio / caller ID lists for the dropdowns.
-  async function openEdit(c) {
-    try {
-      const [d, cids, auds] = await Promise.all([
-        api.get(`/campaigns/${c.id}`),
-        api.get('/caller-ids'),
-        api.get('/audio'),
-      ]);
-      const cam = d.campaign;
-      setEditLists({
-        callerIds: cids.callerIds,
-        audios: auds.audio.filter((x) => x.status === 'ready'),
-      });
-      setEditing({
-        id: cam.id,
-        name: cam.name,
-        audioFileId: cam.audio_file_id || '',
-        callerIdId: cam.caller_id_id || '',
-        maxAttempts: cam.max_attempts || 1,
-        retryDelayMin: cam.retry_delay_min || 0,
-        retryOn: String(cam.retry_on || '').split(',').filter(Boolean),
-        when: toLocalInput(cam.scheduled_at),
-      });
-    } catch (e) {
-      alert(e.message);
-    }
-  }
-
-  async function saveEdit() {
-    try {
-      const body = {
-        name: editing.name,
-        audioFileId: Number(editing.audioFileId),
-        callerIdId: editing.callerIdId ? Number(editing.callerIdId) : null,
-        maxAttempts: Number(editing.maxAttempts),
-        retryDelayMin: Number(editing.retryDelayMin),
-        retryOn: editing.retryOn,
-        ...(editing.when
-          ? { scheduleType: 'scheduled', scheduledAt: new Date(editing.when).toISOString() }
-          : { scheduleType: 'now' }),
-      };
-      await api.patch(`/campaigns/${editing.id}`, body);
-      setEditing(null);
-      load();
-    } catch (e) {
-      alert(e.message);
-    }
-  }
-
-  function toggleRetryOn(key) {
-    setEditing((prev) => ({
-      ...prev,
-      retryOn: prev.retryOn.includes(key)
-        ? prev.retryOn.filter((k) => k !== key)
-        : [...prev.retryOn, key],
-    }));
   }
 
   return (
@@ -254,8 +207,11 @@ export default function Campaigns() {
                       </button>
                     )}
                     {['draft', 'scheduled'].includes(c.status) && (
-                      <button className="btn small" onClick={() => openEdit(c)}>
-                        Edit
+                      <button
+                        className="btn small"
+                        onClick={() => navigate(`/campaigns/${c.id}/edit`)}
+                      >
+                        Inspect
                       </button>
                     )}
                     {c.status !== 'running' && (
@@ -378,8 +334,8 @@ export default function Campaigns() {
               <span>
                 <strong>Everyone again</strong>
                 <span className="muted small">
-                  Dial the whole list from scratch ({rerunFor.total_contacts} numbers). Previous
-                  results are cleared.
+                  Dial the whole list from scratch ({Number(rerunFor.total_contacts).toLocaleString()}{' '}
+                  numbers). Previous results are cleared.
                 </span>
               </span>
             </label>
@@ -393,110 +349,60 @@ export default function Campaigns() {
               <span>
                 <strong>Only those not reached</strong>
                 <span className="muted small">
-                  Skip numbers already answered; re-dial busy, no-answer, failed and congestion.
+                  Skip numbers already answered; re-dial the outcomes you pick below.
                 </span>
               </span>
             </label>
+
+            {rerunScope === 'unreached' && (
+              <div className="rerun-breakdown">
+                {rerunFor.counts ? (
+                  <>
+                    {RERUN_OUTCOMES.map(([k, lbl]) => {
+                      const cnt = Number(rerunFor.counts[k] || 0);
+                      return (
+                        <label key={k} className="pick" style={{ opacity: cnt ? 1 : 0.5 }}>
+                          <input
+                            type="checkbox"
+                            checked={rerunStatuses.includes(k)}
+                            disabled={!cnt}
+                            onChange={() => toggleRerunStatus(k)}
+                          />
+                          <span>
+                            {lbl} <span className="muted small">({cnt.toLocaleString()})</span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                    <p className="muted small" style={{ marginTop: 8 }}>
+                      <strong>
+                        {rerunStatuses
+                          .reduce((sum, k) => sum + Number(rerunFor.counts[k] || 0), 0)
+                          .toLocaleString()}
+                      </strong>{' '}
+                      numbers will be dialed.
+                    </p>
+                  </>
+                ) : (
+                  <p className="muted small">Loading breakdown…</p>
+                )}
+              </div>
+            )}
+
             <div className="form-actions">
               <button className="btn ghost" onClick={() => setRerunFor(null)}>
                 Cancel
               </button>
-              <button className="btn primary" onClick={doRerun}>
+              <button
+                className="btn primary"
+                onClick={doRerun}
+                disabled={
+                  rerunScope === 'unreached' &&
+                  (!rerunFor.counts ||
+                    rerunStatuses.reduce((s, k) => s + Number(rerunFor.counts[k] || 0), 0) === 0)
+                }
+              >
                 Start re-run
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {editing && editLists && (
-        <div className="modal-backdrop" onClick={() => setEditing(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Edit campaign</h3>
-
-            <label>Name</label>
-            <input
-              value={editing.name}
-              onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-            />
-
-            <label>Audio message</label>
-            <select
-              value={editing.audioFileId}
-              onChange={(e) => setEditing({ ...editing, audioFileId: e.target.value })}
-            >
-              {editLists.audios.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-
-            <label>Caller ID</label>
-            <select
-              value={editing.callerIdId}
-              onChange={(e) => setEditing({ ...editing, callerIdId: e.target.value })}
-            >
-              <option value="">None (trunk default)</option>
-              {editLists.callerIds.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label ? `${c.label} — ${c.number}` : c.number}
-                </option>
-              ))}
-            </select>
-
-            <label>Attempts per number</label>
-            <select
-              value={editing.maxAttempts}
-              onChange={(e) => setEditing({ ...editing, maxAttempts: e.target.value })}
-            >
-              <option value={1}>1 — dial once, no retry</option>
-              <option value={2}>2 — dial, then 1 retry</option>
-              <option value={3}>3 — dial, then 2 retries</option>
-              <option value={4}>4 — dial, then 3 retries</option>
-            </select>
-
-            {Number(editing.maxAttempts) > 1 && (
-              <>
-                <label>Wait between attempts (minutes)</label>
-                <input
-                  type="number"
-                  min="0"
-                  max="1440"
-                  value={editing.retryDelayMin}
-                  onChange={(e) => setEditing({ ...editing, retryDelayMin: e.target.value })}
-                />
-
-                <label>Retry only when the result was</label>
-                <div className="radio-row">
-                  {RETRY_OPTS.map(([k, lbl]) => (
-                    <label key={k} className="pick">
-                      <input
-                        type="checkbox"
-                        checked={editing.retryOn.includes(k)}
-                        onChange={() => toggleRetryOn(k)}
-                      />
-                      <span>{lbl}</span>
-                    </label>
-                  ))}
-                </div>
-                <p className="muted small">Answered calls are never retried.</p>
-              </>
-            )}
-
-            <label>Run at (leave empty to start manually)</label>
-            <input
-              type="datetime-local"
-              value={editing.when}
-              onChange={(e) => setEditing({ ...editing, when: e.target.value })}
-            />
-
-            <div className="form-actions">
-              <button className="btn ghost" onClick={() => setEditing(null)}>
-                Cancel
-              </button>
-              <button className="btn primary" onClick={saveEdit}>
-                Save changes
               </button>
             </div>
           </div>

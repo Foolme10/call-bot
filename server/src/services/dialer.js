@@ -450,11 +450,15 @@ async function startCampaign(campaignId) {
   logger.info(`Campaign ${campaignId} started`);
 }
 
+// The non-answered outcomes a rerun can redial ('answered'/'machine' are the
+// reached ones and are never included). 'queued' = never dialed (stopped).
+const RERUN_UNREACHED = ['busy', 'no_answer', 'failed', 'congestion', 'queued'];
+
 // Re-dial a finished (completed/stopped) campaign. scope:
 //   'all'       — reset every number and dial the whole list again from scratch
-//   'unreached' — reset only numbers that were never answered (busy / no answer /
-//                 failed / congestion) and dial just those
-async function rerunCampaign(campaignId, scope) {
+//   'unreached' — reset only not-reached numbers; `statuses` optionally narrows
+//                 to a chosen subset of RERUN_UNREACHED (defaults to all of them)
+async function rerunCampaign(campaignId, scope, statuses) {
   // Clear any lingering runner so we start from a clean slate.
   const existing = runners.get(campaignId);
   if (existing) {
@@ -469,10 +473,18 @@ async function rerunCampaign(campaignId, scope) {
                  next_attempt_at = NULL, dial_start = NULL, answer_time = NULL,
                  end_time = NULL, duration_sec = NULL`;
   if (scope === 'unreached') {
+    const chosen =
+      Array.isArray(statuses) && statuses.length
+        ? statuses.filter((s) => RERUN_UNREACHED.includes(s))
+        : RERUN_UNREACHED;
+    if (chosen.length === 0) return; // nothing selected — no-op, campaign stays finished
+    const placeholders = chosen.map((_, i) => `:st${i}`).join(',');
+    const params = { id: campaignId };
+    chosen.forEach((s, i) => (params[`st${i}`] = s));
     await db.execute(
       `UPDATE call_logs SET ${reset}
-        WHERE campaign_id = :id AND status NOT IN ('answered', 'machine')`,
-      { id: campaignId }
+        WHERE campaign_id = :id AND status IN (${placeholders})`,
+      params
     );
   } else {
     await db.execute(`UPDATE call_logs SET ${reset} WHERE campaign_id = :id`, { id: campaignId });

@@ -296,6 +296,7 @@ router.post(
       throw new ApiError(409, 'Campaign is still active — stop it first');
     }
     const scope = req.body && req.body.scope === 'unreached' ? 'unreached' : 'all';
+    const statuses = Array.isArray(req.body && req.body.statuses) ? req.body.statuses : null;
 
     const pace = config.autoPace(campaign.total_contacts);
     await db.execute('UPDATE campaigns SET cps = :cps, max_concurrent = :max WHERE id = :id', {
@@ -303,7 +304,7 @@ router.post(
       max: pace.maxConcurrent,
       id: campaign.id,
     });
-    await dialer.rerunCampaign(campaign.id, scope);
+    await dialer.rerunCampaign(campaign.id, scope, statuses);
     res.json({ ok: true, status: 'running', scope, pace });
   })
 );

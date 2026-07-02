@@ -30,6 +30,7 @@ export default function App() {
         <Route index element={<Navigate to="/campaigns" replace />} />
         <Route path="campaigns" element={<Campaigns />} />
         <Route path="campaigns/new" element={<NewCampaign />} />
+        <Route path="campaigns/:id/edit" element={<NewCampaign />} />
         <Route path="library" element={<Library />} />
         <Route path="reports" element={<Reports />} />
         <Route path="monitor" element={<Monitor />} />

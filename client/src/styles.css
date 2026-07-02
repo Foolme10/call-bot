@@ -267,6 +267,10 @@ input:focus, select:focus { outline: none; border-color: var(--primary); }
 .pick input { width: auto; margin-top: 3px; }
 .pick span { display: block; }
 .pick .small { display: block; margin-top: 2px; }
+.rerun-breakdown { margin: 4px 0 8px; padding: 10px 12px; border: 1px solid var(--border);
+                   border-radius: 8px; background: var(--panel-2); }
+.rerun-breakdown .pick { border: none; padding: 4px 2px; margin: 0; }
+.rerun-breakdown .pick span { display: inline; }
 
 /* Auto-pace preview on the New Campaign screen */
 .pace-preview {
