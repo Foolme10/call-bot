@@ -144,7 +144,6 @@ export default function Campaigns() {
         maxAttempts: cam.max_attempts || 1,
         retryDelayMin: cam.retry_delay_min || 0,
         retryOn: String(cam.retry_on || '').split(',').filter(Boolean),
-        amdEnabled: !!cam.amd_enabled,
         when: toLocalInput(cam.scheduled_at),
       });
     } catch (e) {
@@ -161,7 +160,6 @@ export default function Campaigns() {
         maxAttempts: Number(editing.maxAttempts),
         retryDelayMin: Number(editing.retryDelayMin),
         retryOn: editing.retryOn,
-        amdEnabled: editing.amdEnabled,
         ...(editing.when
           ? { scheduleType: 'scheduled', scheduledAt: new Date(editing.when).toISOString() }
           : { scheduleType: 'now' }),
@@ -233,37 +231,39 @@ export default function Campaigns() {
                     ? new Date(c.scheduled_at).toLocaleString()
                     : 'Run now'}
                 </td>
-                <td className="actions" onClick={(e) => e.stopPropagation()}>
-                  {['draft', 'paused', 'scheduled', 'stopped'].includes(c.status) && (
-                    <button className="btn small ok" onClick={() => control(c.id, 'start')}>
-                      Start
-                    </button>
-                  )}
-                  {c.status === 'running' && (
-                    <button className="btn small warn" onClick={() => control(c.id, 'pause')}>
-                      Pause
-                    </button>
-                  )}
-                  {['running', 'paused'].includes(c.status) && (
-                    <button className="btn small" onClick={() => control(c.id, 'stop')}>
-                      Stop
-                    </button>
-                  )}
-                  {['completed', 'stopped', 'failed'].includes(c.status) && (
-                    <button className="btn small ok" onClick={() => openRerun(c)}>
-                      Re-run
-                    </button>
-                  )}
-                  {['draft', 'scheduled'].includes(c.status) && (
-                    <button className="btn small" onClick={() => openEdit(c)}>
-                      Edit
-                    </button>
-                  )}
-                  {c.status !== 'running' && (
-                    <button className="btn small ghost" onClick={() => remove(c.id)}>
-                      Delete
-                    </button>
-                  )}
+                <td className="actions-cell" onClick={(e) => e.stopPropagation()}>
+                  <div className="actions">
+                    {['draft', 'paused', 'scheduled', 'stopped'].includes(c.status) && (
+                      <button className="btn small ok" onClick={() => control(c.id, 'start')}>
+                        Start
+                      </button>
+                    )}
+                    {c.status === 'running' && (
+                      <button className="btn small warn" onClick={() => control(c.id, 'pause')}>
+                        Pause
+                      </button>
+                    )}
+                    {['running', 'paused'].includes(c.status) && (
+                      <button className="btn small" onClick={() => control(c.id, 'stop')}>
+                        Stop
+                      </button>
+                    )}
+                    {['completed', 'stopped', 'failed'].includes(c.status) && (
+                      <button className="btn small ok" onClick={() => openRerun(c)}>
+                        Re-run
+                      </button>
+                    )}
+                    {['draft', 'scheduled'].includes(c.status) && (
+                      <button className="btn small" onClick={() => openEdit(c)}>
+                        Edit
+                      </button>
+                    )}
+                    {c.status !== 'running' && (
+                      <button className="btn small ghost" onClick={() => remove(c.id)}>
+                        Delete
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -445,16 +445,15 @@ export default function Campaigns() {
               ))}
             </select>
 
-            <label>Attempts per number (1 = no retry)</label>
+            <label>Attempts per number</label>
             <select
               value={editing.maxAttempts}
               onChange={(e) => setEditing({ ...editing, maxAttempts: e.target.value })}
             >
-              {[1, 2, 3, 4, 5].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
+              <option value={1}>1 — dial once, no retry</option>
+              <option value={2}>2 — dial, then 1 retry</option>
+              <option value={3}>3 — dial, then 2 retries</option>
+              <option value={4}>4 — dial, then 3 retries</option>
             </select>
 
             {Number(editing.maxAttempts) > 1 && (
@@ -468,8 +467,8 @@ export default function Campaigns() {
                   onChange={(e) => setEditing({ ...editing, retryDelayMin: e.target.value })}
                 />
 
-                <label>Retry when the result was</label>
-                <div>
+                <label>Retry only when the result was</label>
+                <div className="radio-row">
                   {RETRY_OPTS.map(([k, lbl]) => (
                     <label key={k} className="pick">
                       <input
@@ -481,17 +480,9 @@ export default function Campaigns() {
                     </label>
                   ))}
                 </div>
+                <p className="muted small">Answered calls are never retried.</p>
               </>
             )}
-
-            <label className="pick">
-              <input
-                type="checkbox"
-                checked={editing.amdEnabled}
-                onChange={(e) => setEditing({ ...editing, amdEnabled: e.target.checked })}
-              />
-              <span>Answering machine detection (skip voicemails)</span>
-            </label>
 
             <label>Run at (leave empty to start manually)</label>
             <input

@@ -153,7 +153,10 @@ input:focus, select:focus { outline: none; border-color: var(--primary); }
 .table.mini th, .table.mini td { padding: 6px 8px; font-size: 12px; white-space: normal; }
 .table .hl { color: var(--info); }
 .table .hl2 { color: var(--ok); }
-.actions { display: flex; gap: 6px; justify-content: flex-end; }
+/* Keep the buttons cell a real table-cell (never display:flex on a <td>, that
+   drops it out of the column grid and the buttons spill outside the table). */
+.actions-cell { text-align: right; white-space: nowrap; }
+.actions { display: inline-flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
 
 /* Badges */
 .badge {

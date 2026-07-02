@@ -22,7 +22,6 @@ export default function NewCampaign() {
   const [maxAttempts, setMaxAttempts] = useState(1);
   const [retryDelayMin, setRetryDelayMin] = useState(5);
   const [retryOn, setRetryOn] = useState(['busy', 'no_answer', 'congestion', 'failed']);
-  const [amdEnabled, setAmdEnabled] = useState(false);
   const [scheduleType, setScheduleType] = useState('now');
   const [scheduledAt, setScheduledAt] = useState('');
 
@@ -101,7 +100,6 @@ export default function NewCampaign() {
         ...(Number(maxAttempts) > 1
           ? { retryDelayMin: Number(retryDelayMin), retryOn }
           : {}),
-        amdEnabled,
         contacts: { uploadId: preview.uploadId, nameColumn, numberColumn },
       };
       const d = await api.post('/campaigns', body);
@@ -224,20 +222,6 @@ export default function NewCampaign() {
             </select>
           </div>
         </div>
-        <label style={{ marginTop: 14 }}>
-          <input
-            type="checkbox"
-            checked={amdEnabled}
-            onChange={(e) => setAmdEnabled(e.target.checked)}
-            style={{ width: 'auto' }}
-          />{' '}
-          Answering machine detection
-        </label>
-        <p className="muted small">
-          On: calls answered by a machine are logged as “Answering Machine” and the message plays
-          only to live people. Off: the message plays to whoever answers (good for leaving
-          voicemails).
-        </p>
       </section>
 
       <section className="card">
@@ -270,11 +254,10 @@ export default function NewCampaign() {
           <div>
             <label>Attempts per number</label>
             <select value={maxAttempts} onChange={(e) => setMaxAttempts(Number(e.target.value))}>
-              <option value={1}>1 — no retry</option>
-              <option value={2}>2 attempts</option>
-              <option value={3}>3 attempts</option>
-              <option value={4}>4 attempts</option>
-              <option value={5}>5 attempts</option>
+              <option value={1}>1 — dial once, no retry</option>
+              <option value={2}>2 — dial, then 1 retry</option>
+              <option value={3}>3 — dial, then 2 retries</option>
+              <option value={4}>4 — dial, then 3 retries</option>
             </select>
           </div>
           {maxAttempts > 1 && (
