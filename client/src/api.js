@@ -42,6 +42,17 @@ export const api = {
   del: (p) => request('DELETE', p),
 };
 
+// Fetch a protected media file (audio) with the auth header and return an object
+// URL for an <audio> element — a plain <audio src> can't send the JWT.
+export async function fetchMediaUrl(path) {
+  const res = await fetch(`/api${path}`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) throw new Error('Could not load audio');
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
 // CSV download that still sends the auth header (a plain <a> can't).
 export async function downloadCsv(path, filename) {
   const res = await fetch(`/api${path}`, {

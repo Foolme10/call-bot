@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { api } from '../api.js';
+import { api, fetchMediaUrl } from '../api.js';
 
 const guess = (cols, re) => cols.find((c) => re.test(c)) || '';
 
@@ -23,6 +23,9 @@ export default function NewCampaign() {
   const navigate = useNavigate();
   const { id } = useParams();
   const editMode = Boolean(id); // /campaigns/:id/edit reuses this form to edit
+  const [readOnly, setReadOnly] = useState(false); // live campaign: view settings, no edits
+  const [campaignStatus, setCampaignStatus] = useState('');
+  const [audioPreviewUrl, setAudioPreviewUrl] = useState(''); // object URL for the selected audio
   const [existingContacts, setExistingContacts] = useState(null); // list size when editing
   const [name, setName] = useState('');
   const [callerIds, setCallerIds] = useState([]);
@@ -79,6 +82,10 @@ export default function NewCampaign() {
         setScheduleType(cam.schedule_type === 'scheduled' ? 'scheduled' : 'now');
         setScheduledAt(toLocalInput(cam.scheduled_at));
         setExistingContacts(cam.total_contacts);
+        setCampaignStatus(cam.status);
+        // Only campaigns that haven't started can be edited; everything else is
+        // view-only (matches the backend, which rejects edits once it's live).
+        setReadOnly(!['draft', 'scheduled'].includes(cam.status));
         api
           .get(`/campaigns/meta/pace?count=${cam.total_contacts}`)
           .then(setEstimate)
@@ -86,6 +93,30 @@ export default function NewCampaign() {
       })
       .catch((e) => setError(e.message));
   }, [editMode, id]);
+
+  // Load a playable URL for the currently-selected audio so it can be previewed.
+  useEffect(() => {
+    if (!audioFileId) {
+      setAudioPreviewUrl('');
+      return undefined;
+    }
+    let url;
+    let cancelled = false;
+    fetchMediaUrl(`/audio/${audioFileId}/play`)
+      .then((u) => {
+        if (cancelled) {
+          URL.revokeObjectURL(u);
+          return;
+        }
+        url = u;
+        setAudioPreviewUrl(u);
+      })
+      .catch(() => setAudioPreviewUrl(''));
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [audioFileId]);
 
   async function onFile(e) {
     const file = e.target.files[0];
@@ -116,6 +147,7 @@ export default function NewCampaign() {
   async function onSubmit(e) {
     e.preventDefault();
     setError('');
+    if (readOnly) return; // live campaign — nothing to save
     if (!audioFileId) return setError('Choose an audio recording to play.');
     if (scheduleType === 'scheduled' && !scheduledAt)
       return setError('Pick a date and time for the scheduled campaign.');
@@ -176,10 +208,19 @@ export default function NewCampaign() {
   return (
     <form onSubmit={onSubmit} className="form-page">
       <div className="page-head">
-        <h2>{editMode ? 'Campaign settings' : 'New campaign'}</h2>
+        <h2>
+          {editMode ? (readOnly ? 'Campaign settings (read-only)' : 'Campaign settings') : 'New campaign'}
+        </h2>
       </div>
       {error && <div className="alert error" style={{ whiteSpace: 'pre-wrap' }}>{error}</div>}
+      {readOnly && (
+        <div className="alert" style={{ background: 'rgba(210,153,34,.12)', color: '#e3b341', border: '1px solid rgba(210,153,34,.3)' }}>
+          This campaign is <strong>{campaignStatus === 'running' ? 'live' : campaignStatus}</strong> —
+          settings are read-only. Only a scheduled campaign that hasn’t started yet can be edited.
+        </div>
+      )}
 
+      <fieldset disabled={readOnly} style={{ border: 'none', margin: 0, padding: 0, minWidth: 0 }}>
       <section className="card">
         <h3>1. Campaign name</h3>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. June promo" required />
@@ -278,6 +319,13 @@ export default function NewCampaign() {
             </select>
             {audios.length === 0 && (
               <p className="muted small">No recordings yet — add one on the “Audio & Caller IDs” tab.</p>
+            )}
+            {audioPreviewUrl && (
+              <audio
+                controls
+                src={audioPreviewUrl}
+                style={{ display: 'block', marginTop: 8, height: 36, width: '100%' }}
+              />
             )}
           </div>
           <div>
@@ -392,20 +440,23 @@ export default function NewCampaign() {
           />
         )}
       </section>
+      </fieldset>
 
       <div className="form-actions">
         <button type="button" className="btn ghost" onClick={() => navigate('/campaigns')}>
-          Cancel
+          {readOnly ? 'Back' : 'Cancel'}
         </button>
-        <button className="btn primary" disabled={busy}>
-          {busy
-            ? 'Saving…'
-            : editMode
-            ? 'Save changes'
-            : scheduleType === 'now'
-            ? 'Create & start'
-            : 'Create & schedule'}
-        </button>
+        {!readOnly && (
+          <button className="btn primary" disabled={busy}>
+            {busy
+              ? 'Saving…'
+              : editMode
+              ? 'Save changes'
+              : scheduleType === 'now'
+              ? 'Create & start'
+              : 'Create & schedule'}
+          </button>
+        )}
       </div>
     </form>
   );

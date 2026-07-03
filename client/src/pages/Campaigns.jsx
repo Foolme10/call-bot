@@ -214,14 +214,12 @@ export default function Campaigns() {
                         Re-run
                       </button>
                     )}
-                    {['draft', 'scheduled'].includes(c.status) && (
-                      <button
-                        className="btn small"
-                        onClick={() => navigate(`/campaigns/${c.id}/edit`)}
-                      >
-                        Inspect
-                      </button>
-                    )}
+                    <button
+                      className="btn small"
+                      onClick={() => navigate(`/campaigns/${c.id}/edit`)}
+                    >
+                      Inspect
+                    </button>
                     {c.status !== 'running' && (
                       <button className="btn small ghost" onClick={() => remove(c.id)}>
                         Delete

@@ -2,7 +2,9 @@
 
 const express = require('express');
 const fs = require('fs');
+const path = require('path');
 const db = require('../db');
+const config = require('../config');
 const { ApiError, asyncHandler } = require('../http');
 const { requireAuth } = require('../middleware/auth');
 const { audioUpload } = require('../middleware/upload');
@@ -11,6 +13,26 @@ const logger = require('../logger');
 
 const router = express.Router();
 router.use(requireAuth);
+
+// Stream the converted WAV so the UI can preview it. Admins can play any file;
+// others only their own. WAV (8kHz PCM) plays natively in browsers.
+router.get(
+  '/:id/play',
+  asyncHandler(async (req, res) => {
+    const isAdmin = req.user.role === 'admin';
+    const rows = await db.query(
+      `SELECT stored_filename FROM audio_files
+         WHERE id = :id ${isAdmin ? '' : 'AND user_id = :uid'}`,
+      { id: req.params.id, uid: req.user.id }
+    );
+    if (!rows[0]) throw new ApiError(404, 'Audio not found');
+    const filePath = path.join(config.storage.audioDir, `${rows[0].stored_filename}.wav`);
+    if (!fs.existsSync(filePath)) throw new ApiError(404, 'Audio file missing on disk');
+    res.setHeader('Content-Type', 'audio/wav');
+    res.setHeader('Accept-Ranges', 'bytes');
+    fs.createReadStream(filePath).pipe(res);
+  })
+);
 
 router.get(
   '/',

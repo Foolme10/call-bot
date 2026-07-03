@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { api } from '../api.js';
+import { api, fetchMediaUrl } from '../api.js';
 
 export default function Library() {
   const [audio, setAudio] = useState([]);
   const [callerIds, setCallerIds] = useState([]);
   const [error, setError] = useState('');
+  const [players, setPlayers] = useState({}); // audioId -> object URL for preview
 
   // audio upload form
   const [audioName, setAudioName] = useState('');
@@ -62,6 +63,16 @@ export default function Library() {
     }
   }
 
+  async function preview(id) {
+    if (players[id]) return; // already loaded
+    try {
+      const url = await fetchMediaUrl(`/audio/${id}/play`);
+      setPlayers((p) => ({ ...p, [id]: url }));
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
   async function delAudio(id) {
     if (!confirm('Delete this recording?')) return;
     await api.del(`/audio/${id}`).then(load).catch((e) => alert(e.message));
@@ -109,15 +120,32 @@ export default function Library() {
             <tbody>
               {audio.map((a) => (
                 <tr key={a.id}>
-                  <td>{a.name}</td>
+                  <td>
+                    {a.name}
+                    {players[a.id] && (
+                      <audio
+                        controls
+                        autoPlay
+                        src={players[a.id]}
+                        style={{ display: 'block', marginTop: 6, height: 34, maxWidth: 240 }}
+                      />
+                    )}
+                  </td>
                   <td>{a.duration_sec ? `${a.duration_sec}s` : '—'}</td>
                   <td>
                     <span className={`badge ${a.status === 'ready' ? 'ok' : 'warn'}`}>{a.status}</span>
                   </td>
-                  <td>
-                    <button className="btn small ghost" onClick={() => delAudio(a.id)}>
-                      Delete
-                    </button>
+                  <td className="actions-cell">
+                    <div className="actions">
+                      {a.status === 'ready' && !players[a.id] && (
+                        <button className="btn small" onClick={() => preview(a.id)}>
+                          ▶ Preview
+                        </button>
+                      )}
+                      <button className="btn small ghost" onClick={() => delAudio(a.id)}>
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
