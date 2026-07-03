@@ -331,6 +331,7 @@ export default function Monitor() {
                         {c.attempt > 1 && (
                           <span className="badge warn" style={{ marginLeft: 6 }}>
                             retry {c.attempt - 1}
+                            {retry.maxAttempts > 1 ? ` / ${retry.maxAttempts - 1}` : ''}
                           </span>
                         )}
                       </td>
