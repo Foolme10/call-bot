@@ -178,6 +178,12 @@ export default function Campaigns() {
                 )}
                 <td>
                   <span className={STATUS_CLASS[c.status] || 'badge'}>{c.status}</span>
+                  {c.rerun_scope && (
+                    <div className="muted small" style={{ marginTop: 4 }}>
+                      ↻ {['running', 'paused'].includes(c.status) ? 'Redialing' : 'Re-ran'}{' '}
+                      {c.rerun_scope === 'all' ? 'all numbers' : 'unreached'}
+                    </div>
+                  )}
                 </td>
                 <td>
                   <span className="muted small">up to</span> {c.cps} calls/sec

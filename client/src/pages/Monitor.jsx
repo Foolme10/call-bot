@@ -280,106 +280,52 @@ export default function Monitor() {
             </div>
           </div>
 
-          <div className="monitor-cols">
-            {/* Live: only calls that are actually up right now. */}
-            <section className="card">
-              <h3>
-                Active Calls <span className="muted small">({live.length})</span>
-              </h3>
-              <div className="table-wrap">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Number</th>
-                      <th>Name</th>
-                      <th>Status</th>
-                      <th>Duration</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {live.map((c) => (
-                      <tr key={c.callLogId}>
-                        <td>{c.phone || '—'}</td>
-                        <td>{c.name || '—'}</td>
-                        <td>
-                          <span className={`badge ${c.status === 'answered' ? 'ok' : 'info'}`}>
-                            {c.status === 'answered' ? 'Connected' : 'Ringing'}
+          {/* Live: only calls that are actually up right now. */}
+          <section className="card">
+            <h3>
+              Active Calls <span className="muted small">({live.length})</span>
+            </h3>
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Number</th>
+                    <th>Name</th>
+                    <th>Status</th>
+                    <th>Duration</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {live.map((c) => (
+                    <tr key={c.callLogId}>
+                      <td>{c.phone || '—'}</td>
+                      <td>{c.name || '—'}</td>
+                      <td>
+                        <span className={`badge ${c.status === 'answered' ? 'ok' : 'info'}`}>
+                          {c.status === 'answered' ? 'Connected' : 'Ringing'}
+                        </span>
+                        {c.attempt > 1 && (
+                          <span className="badge warn" style={{ marginLeft: 6 }}>
+                            retry {c.attempt - 1}
                           </span>
-                          {c.attempt > 1 && (
-                            <span className="badge warn" style={{ marginLeft: 6 }}>
-                              retry {c.attempt - 1}
-                            </span>
-                          )}
-                        </td>
-                        <td className="muted small">{mmss(now - new Date(c.at).getTime())}</td>
-                      </tr>
-                    ))}
-                    {live.length === 0 && (
-                      <tr>
-                        <td colSpan="4" className="muted">
-                          No active calls at the moment.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            {/* Results: a proper chronological log of finished calls, newest first. */}
-            <section className="card">
-              <h3>
-                Completed Calls <span className="muted small">(most recent first)</span>
-              </h3>
-              <div className="table-wrap">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Time</th>
-                      <th>Number</th>
-                      <th>Name</th>
-                      <th>Result</th>
+                        )}
+                      </td>
+                      <td className="muted small">{mmss(now - new Date(c.at).getTime())}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {log.map((c, i) => (
-                      <tr key={`${c.callLogId}-${c.at}-${i}`}>
-                        <td className="muted small">
-                          {c.at ? new Date(c.at).toLocaleTimeString() : ''}
-                        </td>
-                        <td>{c.phone || '—'}</td>
-                        <td>{c.name || '—'}</td>
-                        <td>
-                          <span className={`badge ${resultClass(c.status)}`} title={HELP[c.status] || ''}>
-                            {RESULT_LABEL[c.status] || c.status}
-                          </span>
-                          {c.attempt > 1 && (
-                            <span className="muted small"> · retry {c.attempt - 1}</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                    {log.length === 0 && (
-                      <tr>
-                        <td colSpan="4" className="muted">
-                          No completed calls yet.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          </div>
+                  ))}
+                  {live.length === 0 && (
+                    <tr>
+                      <td colSpan="4" className="muted">
+                        No active calls at the moment.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
         </>
       )}
     </div>
   );
-}
-
-function resultClass(s) {
-  if (s === 'answered') return 'ok';
-  if (s === 'busy' || s === 'no_answer') return 'warn';
-  if (s === 'failed' || s === 'congestion') return 'error';
-  return '';
 }

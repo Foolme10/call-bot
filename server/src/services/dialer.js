@@ -490,10 +490,11 @@ async function rerunCampaign(campaignId, scope, statuses) {
     await db.execute(`UPDATE call_logs SET ${reset} WHERE campaign_id = :id`, { id: campaignId });
   }
 
-  // Fresh run: drop the previous status/timestamps so started_at reflects this run.
+  // Fresh run: drop the previous status/timestamps so started_at reflects this
+  // run, and record the re-run scope so the UI can show "redialing …".
   await db.execute(
-    "UPDATE campaigns SET status = 'draft', started_at = NULL, completed_at = NULL WHERE id = :id",
-    { id: campaignId }
+    "UPDATE campaigns SET status = 'draft', started_at = NULL, completed_at = NULL, rerun_scope = :scope WHERE id = :id",
+    { id: campaignId, scope }
   );
 
   await startCampaign(campaignId);

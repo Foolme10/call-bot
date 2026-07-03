@@ -65,6 +65,9 @@ async function main() {
   await ensureColumn('campaigns', 'retry_delay_min', 'retry_delay_min INT UNSIGNED NOT NULL DEFAULT 0 AFTER max_attempts');
   await ensureColumn('campaigns', 'retry_on', "retry_on VARCHAR(64) NOT NULL DEFAULT 'busy,no_answer,congestion,failed' AFTER retry_delay_min");
   await ensureColumn('campaigns', 'amd_enabled', 'amd_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER retry_on');
+  // Records how the current run was launched: NULL = first run, 'all' = redial
+  // everyone, 'unreached' = redial only the chosen not-reached outcomes.
+  await ensureColumn('campaigns', 'rerun_scope', 'rerun_scope VARCHAR(16) NULL AFTER amd_enabled');
   await ensureColumn('call_logs', 'next_attempt_at', 'next_attempt_at DATETIME NULL AFTER attempts');
   await ensureIndex('call_logs', 'idx_calllogs_queue', 'KEY idx_calllogs_queue (campaign_id, status, next_attempt_at)');
 

@@ -59,7 +59,7 @@ router.get(
     const rows = await db.query(
       `SELECT c.id, c.name, c.status, c.intensity_level, c.cps, c.max_concurrent,
               c.schedule_type, c.scheduled_at, c.total_contacts, c.created_at,
-              c.started_at, c.completed_at,
+              c.started_at, c.completed_at, c.rerun_scope,
               ci.label AS caller_label, ci.number AS caller_number, a.name AS audio_name,
               u.username AS owner,
               COALESCE(s.total, 0)    AS dialed,
