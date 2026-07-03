@@ -16,9 +16,9 @@ const HELP = {
   no_answer: 'The phone rang but nobody picked up before it timed out.',
   busy: 'The line was engaged — the person was already on another call.',
   congestion:
-    'The carrier/network couldn’t complete the call right then — all circuits were busy or a temporary network problem. Often succeeds if you re-run it.',
+    'The carrier/network couldn’t complete the call right then — all circuits were busy or a temporary network problem. Often succeeds if you redial it.',
   failed:
-    'The call couldn’t be placed at all — usually a wrong, invalid, or blocked number, or the carrier rejected it. Re-running rarely helps these.',
+    'The call couldn’t be placed at all — usually a wrong, invalid, or blocked number, or the carrier rejected it. Redialing rarely helps these.',
   machine: 'An answering machine / voicemail was detected (only when detection is turned on).',
   queued: 'The campaign was stopped before this number was dialed.',
 };

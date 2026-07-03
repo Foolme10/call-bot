@@ -180,7 +180,7 @@ export default function Campaigns() {
                   <span className={STATUS_CLASS[c.status] || 'badge'}>{c.status}</span>
                   {c.rerun_scope && (
                     <div className="muted small" style={{ marginTop: 4 }}>
-                      ↻ {['running', 'paused'].includes(c.status) ? 'Redialing' : 'Re-ran'}{' '}
+                      ↻ {['running', 'paused'].includes(c.status) ? 'Redialing' : 'Redialed'}{' '}
                       {c.rerun_scope === 'all' ? 'all numbers' : 'unreached'}
                     </div>
                   )}
@@ -217,7 +217,7 @@ export default function Campaigns() {
                     )}
                     {['completed', 'stopped', 'failed'].includes(c.status) && (
                       <button className="btn small ok" onClick={() => openRerun(c)}>
-                        Re-run
+                        Redial
                       </button>
                     )}
                     <button
@@ -334,8 +334,8 @@ export default function Campaigns() {
       {rerunFor && (
         <div className="modal-backdrop" onClick={() => setRerunFor(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Re-run — {rerunFor.name}</h3>
-            <p className="muted small">Choose who to dial on this run.</p>
+            <h3>Redial — {rerunFor.name}</h3>
+            <p className="muted small">Choose who to redial.</p>
             <label className="pick">
               <input
                 type="radio"
@@ -344,7 +344,7 @@ export default function Campaigns() {
                 onChange={() => setRerunScope('all')}
               />
               <span>
-                <strong>Everyone again</strong>
+                <strong>Redial everyone</strong>
                 <span className="muted small">
                   Dial the whole list from scratch ({Number(rerunFor.total_contacts).toLocaleString()}{' '}
                   numbers). Previous results are cleared.
@@ -359,9 +359,9 @@ export default function Campaigns() {
                 onChange={() => setRerunScope('unreached')}
               />
               <span>
-                <strong>Only those not reached</strong>
+                <strong>Redial only those not reached</strong>
                 <span className="muted small">
-                  Skip numbers already answered; re-dial the outcomes you pick below.
+                  Skip numbers already answered; redial the outcomes you pick below.
                 </span>
               </span>
             </label>
@@ -414,7 +414,7 @@ export default function Campaigns() {
                     rerunStatuses.reduce((s, k) => s + Number(rerunFor.counts[k] || 0), 0) === 0)
                 }
               >
-                Start re-run
+                Start redial
               </button>
             </div>
           </div>
