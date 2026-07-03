@@ -266,6 +266,8 @@ router.get(
       counts: byStatus,
       active,
       rerunScope: campaign.rerun_scope || null,
+      maxAttempts: campaign.max_attempts || 1,
+      retryOn: campaign.retry_on || '',
     });
   })
 );

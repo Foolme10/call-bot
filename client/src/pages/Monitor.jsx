@@ -37,6 +37,7 @@ export default function Monitor() {
   const [counts, setCounts] = useState({});
   const [campaignStatus, setCampaignStatus] = useState('');
   const [rerunScope, setRerunScope] = useState(null); // 'all' | 'unreached' when this run is a redial
+  const [retry, setRetry] = useState({ maxAttempts: 1, retryOn: '' }); // per-number auto-retry settings
   const [active, setActive] = useState({}); // callLogId -> { name, phone, status, at } (in progress)
   const [log, setLog] = useState([]); // completed results, newest first
   const [connected, setConnected] = useState(false);
@@ -78,6 +79,7 @@ export default function Monitor() {
         setCounts(d.counts);
         setCampaignStatus(d.status);
         setRerunScope(d.rerunScope || null);
+        setRetry({ maxAttempts: d.maxAttempts || 1, retryOn: d.retryOn || '' });
         setActive((prev) => {
           const next = {};
           for (const r of d.active || []) {
@@ -252,6 +254,15 @@ export default function Monitor() {
               ↻ This is a <strong>redial</strong> —{' '}
               {rerunScope === 'all' ? 'dialing all numbers again' : 'dialing only the not-reached numbers'}
               {' '}({total.toLocaleString()} {total === 1 ? 'lead' : 'leads'} this run).
+            </div>
+          )}
+
+          {retry.maxAttempts > 1 && (
+            <div className="muted small" style={{ marginBottom: 12 }}>
+              ↻ Auto-retry on — up to <strong>{retry.maxAttempts}</strong> attempts per number
+              {retry.retryOn
+                ? ` (${retry.retryOn.split(',').filter(Boolean).map((s) => RESULT_LABEL[s] || s).join(', ')})`
+                : ''}
             </div>
           )}
 
