@@ -69,6 +69,10 @@ async function main() {
   // everyone, 'unreached' = redial only the chosen not-reached outcomes.
   await ensureColumn('campaigns', 'rerun_scope', 'rerun_scope VARCHAR(16) NULL AFTER amd_enabled');
   await ensureColumn('call_logs', 'next_attempt_at', 'next_attempt_at DATETIME NULL AFTER attempts');
+  // 1 = this number is part of the current run; 0 = excluded (e.g. an already-
+  // reached number skipped by a "redial unreached" run). Lets the monitor/list
+  // count and pace off just the numbers being dialed now.
+  await ensureColumn('call_logs', 'in_run', 'in_run TINYINT(1) NOT NULL DEFAULT 1 AFTER status');
   await ensureIndex('call_logs', 'idx_calllogs_queue', 'KEY idx_calllogs_queue (campaign_id, status, next_attempt_at)');
 
   console.log('Migration complete.');

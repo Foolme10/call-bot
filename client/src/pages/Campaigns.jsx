@@ -189,7 +189,7 @@ export default function Campaigns() {
                   <span className="muted small">up to</span> {c.cps} calls/sec
                 </td>
                 <td>
-                  {c.completed}/{c.total_contacts}
+                  {c.completed}/{c.run_total || c.total_contacts}
                   <div className="muted small">{c.answered} answered</div>
                 </td>
                 <td>{c.caller_number || '—'}</td>

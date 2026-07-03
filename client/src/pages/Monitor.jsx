@@ -36,6 +36,7 @@ export default function Monitor() {
   const [campaignId, setCampaignId] = useState('');
   const [counts, setCounts] = useState({});
   const [campaignStatus, setCampaignStatus] = useState('');
+  const [rerunScope, setRerunScope] = useState(null); // 'all' | 'unreached' when this run is a redial
   const [active, setActive] = useState({}); // callLogId -> { name, phone, status, at } (in progress)
   const [log, setLog] = useState([]); // completed results, newest first
   const [connected, setConnected] = useState(false);
@@ -76,6 +77,7 @@ export default function Monitor() {
         if (!live) return;
         setCounts(d.counts);
         setCampaignStatus(d.status);
+        setRerunScope(d.rerunScope || null);
         setActive((prev) => {
           const next = {};
           for (const r of d.active || []) {
@@ -242,6 +244,17 @@ export default function Monitor() {
         <div className="empty">Select a campaign to watch it dial in real time.</div>
       ) : (
         <>
+          {rerunScope && (
+            <div
+              className="alert"
+              style={{ background: 'rgba(88,166,255,.12)', color: '#79c0ff', border: '1px solid rgba(88,166,255,.3)' }}
+            >
+              ↻ This is a <strong>redial</strong> —{' '}
+              {rerunScope === 'all' ? 'dialing all numbers again' : 'dialing only the not-reached numbers'}
+              {' '}({total.toLocaleString()} {total === 1 ? 'lead' : 'leads'} this run).
+            </div>
+          )}
+
           <div className="progress">
             <div className="progress-fill" style={{ width: `${progress}%` }} />
             <span className="progress-label">

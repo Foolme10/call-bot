@@ -62,8 +62,8 @@ router.get(
               c.started_at, c.completed_at, c.rerun_scope,
               ci.label AS caller_label, ci.number AS caller_number, a.name AS audio_name,
               u.username AS owner,
-              COALESCE(s.total, 0)    AS dialed,
-              COALESCE(s.answered, 0) AS answered,
+              COALESCE(s.run_total, 0) AS run_total,
+              COALESCE(s.answered, 0)  AS answered,
               COALESCE(s.completed, 0) AS completed
          FROM campaigns c
          LEFT JOIN caller_ids ci ON ci.id = c.caller_id_id
@@ -71,9 +71,9 @@ router.get(
          LEFT JOIN users u ON u.id = c.user_id
          LEFT JOIN (
               SELECT campaign_id,
-                     COUNT(*) AS total,
-                     SUM(status = 'answered') AS answered,
-                     SUM(status NOT IN ('queued','dialing')) AS completed
+                     SUM(in_run = 1) AS run_total,
+                     SUM(in_run = 1 AND status = 'answered') AS answered,
+                     SUM(in_run = 1 AND status NOT IN ('queued','dialing')) AS completed
                 FROM call_logs GROUP BY campaign_id
          ) s ON s.campaign_id = c.id
         ${scope}
@@ -252,13 +252,21 @@ router.get(
         ORDER BY dial_start DESC LIMIT 200`,
       { id: campaign.id }
     );
+    // Count only the current run so a "redial unreached" shows this run's numbers,
+    // not the whole history.
     const counts = await db.query(
-      `SELECT status, COUNT(*) AS n FROM call_logs WHERE campaign_id = :id GROUP BY status`,
+      `SELECT status, COUNT(*) AS n FROM call_logs
+        WHERE campaign_id = :id AND in_run = 1 GROUP BY status`,
       { id: campaign.id }
     );
     const byStatus = {};
     counts.forEach((r) => (byStatus[r.status] = Number(r.n)));
-    res.json({ status: campaign.status, counts: byStatus, active });
+    res.json({
+      status: campaign.status,
+      counts: byStatus,
+      active,
+      rerunScope: campaign.rerun_scope || null,
+    });
   })
 );
 
@@ -295,9 +303,9 @@ router.post(
 );
 
 // Re-run a finished (completed/stopped) campaign. scope=all re-dials the whole
-// list; scope=unreached re-dials only numbers that were never answered. The pace
-// is re-computed from current settings, then the dialer resets the call logs and
-// starts.
+// list; scope=unreached re-dials only the chosen not-reached outcomes. The
+// dialer resets the call logs, marks the current run, and re-paces from how many
+// numbers this run actually dials.
 router.post(
   '/:id/rerun',
   asyncHandler(async (req, res) => {
@@ -308,14 +316,8 @@ router.post(
     const scope = req.body && req.body.scope === 'unreached' ? 'unreached' : 'all';
     const statuses = Array.isArray(req.body && req.body.statuses) ? req.body.statuses : null;
 
-    const pace = config.autoPace(campaign.total_contacts);
-    await db.execute('UPDATE campaigns SET cps = :cps, max_concurrent = :max WHERE id = :id', {
-      cps: pace.cps,
-      max: pace.maxConcurrent,
-      id: campaign.id,
-    });
     await dialer.rerunCampaign(campaign.id, scope, statuses);
-    res.json({ ok: true, status: 'running', scope, pace });
+    res.json({ ok: true, status: 'running', scope });
   })
 );
 

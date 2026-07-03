@@ -481,20 +481,36 @@ async function rerunCampaign(campaignId, scope, statuses) {
     const placeholders = chosen.map((_, i) => `:st${i}`).join(',');
     const params = { id: campaignId };
     chosen.forEach((s, i) => (params[`st${i}`] = s));
+    // Everything is out of this run except the chosen not-reached outcomes.
+    await db.execute('UPDATE call_logs SET in_run = 0 WHERE campaign_id = :id', { id: campaignId });
     await db.execute(
-      `UPDATE call_logs SET ${reset}
+      `UPDATE call_logs SET ${reset}, in_run = 1
         WHERE campaign_id = :id AND status IN (${placeholders})`,
       params
     );
   } else {
-    await db.execute(`UPDATE call_logs SET ${reset} WHERE campaign_id = :id`, { id: campaignId });
+    await db.execute(
+      `UPDATE call_logs SET ${reset}, in_run = 1 WHERE campaign_id = :id`,
+      { id: campaignId }
+    );
   }
 
+  // Pace this run from how many numbers it actually dials (not the whole list),
+  // so a small "redial unreached" run gets a sensibly small CPS.
+  const [{ n: runCount }] = await db.query(
+    'SELECT COUNT(*) AS n FROM call_logs WHERE campaign_id = :id AND in_run = 1',
+    { id: campaignId }
+  );
+  const pace = config.autoPace(Math.max(1, Number(runCount)));
+
   // Fresh run: drop the previous status/timestamps so started_at reflects this
-  // run, and record the re-run scope so the UI can show "redialing …".
+  // run, record the re-run scope, and apply the recomputed pace.
   await db.execute(
-    "UPDATE campaigns SET status = 'draft', started_at = NULL, completed_at = NULL, rerun_scope = :scope WHERE id = :id",
-    { id: campaignId, scope }
+    `UPDATE campaigns
+        SET status = 'draft', started_at = NULL, completed_at = NULL,
+            rerun_scope = :scope, cps = :cps, max_concurrent = :max
+      WHERE id = :id`,
+    { id: campaignId, scope, cps: pace.cps, max: pace.maxConcurrent }
   );
 
   await startCampaign(campaignId);
