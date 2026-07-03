@@ -32,8 +32,8 @@ export default function Login() {
   return (
     <div className="center">
       <form className="card login" onSubmit={onSubmit}>
-        <h1 className="brand big">📞 call-bot</h1>
-        <p className="muted">Voice broadcasting console</p>
+        <h1 className="brand big">📣 Herald</h1>
+        <p className="muted">Voice &amp; SMS broadcasting console</p>
         {error && <div className="alert error">{error}</div>}
         <label>Username</label>
         <input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />

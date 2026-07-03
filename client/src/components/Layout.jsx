@@ -13,7 +13,7 @@ export default function Layout() {
   return (
     <div className="app">
       <header className="topbar">
-        <div className="brand">📞 call-bot</div>
+        <div className="brand">📣 Herald</div>
         <nav className="tabs">
           {tabs.map((t) => (
             <NavLink key={t.to} to={t.to} className={({ isActive }) => (isActive ? 'active' : '')}>
