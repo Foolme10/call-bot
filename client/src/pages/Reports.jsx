@@ -156,6 +156,9 @@ export default function Reports() {
                 <th>Name</th>
                 <th>Number</th>
                 <th>Status</th>
+                <th title="How long an answered call stayed on the line hearing the audio">
+                  Listen time
+                </th>
                 <th>Attempts</th>
                 <th>Total dials</th>
               </tr>
@@ -170,6 +173,7 @@ export default function Reports() {
                     <td>
                       <span className={`badge ${statusClass(r.status)}`}>{r.statusLabel}</span>
                     </td>
+                    <td className="muted small">{listenTime(r)}</td>
                     <td>{r.attempts}</td>
                     <td>
                       {r.total_dials}
@@ -180,7 +184,7 @@ export default function Reports() {
               })}
               {data.rows.length === 0 && (
                 <tr>
-                  <td colSpan="5" className="muted">
+                  <td colSpan="6" className="muted">
                     No matching calls.
                   </td>
                 </tr>
@@ -211,4 +215,11 @@ function statusClass(s) {
   if (s === 'busy' || s === 'no_answer') return 'warn';
   if (s === 'failed' || s === 'congestion') return 'error';
   return '';
+}
+
+// Listen time only makes sense for connected calls; format seconds as m:ss.
+function listenTime(row) {
+  if (row.status !== 'answered' && row.status !== 'machine') return '—';
+  const s = Number(row.duration_sec || 0);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
