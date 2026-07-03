@@ -44,9 +44,11 @@ function mapCause(cause, answered) {
 }
 
 // Pure decision: should this finished call be re-queued for another attempt?
-// Answered calls are never retried.
-function shouldRetry(status, attempt, maxAttempts, retryOn) {
-  return status !== 'answered' && retryOn.has(status) && attempt < maxAttempts;
+// Answered calls are never retried; the lifetime dial cap also stops retries.
+function shouldRetry(status, attempt, maxAttempts, retryOn, totalDials, maxTotalDials) {
+  if (status === 'answered' || !retryOn.has(status) || attempt >= maxAttempts) return false;
+  if (maxTotalDials > 0 && totalDials >= maxTotalDials) return false; // hit lifetime cap
+  return true;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -71,6 +73,7 @@ class Runner {
         .filter(Boolean)
     );
     this.nextRetryAt = null; // epoch ms — set while idling until a future retry is due
+    this.maxTotalDials = config.calls.maxTotalDials; // lifetime dial cap (0 = off)
     this.amdEnabled = !!campaign.amd_enabled; // answering-machine detection on?
     this.live = new Set(); // channelIds currently up for this campaign
     this.buffer = []; // prefetched queued call_log rows
@@ -154,12 +157,14 @@ class Runner {
 
   async takeNext() {
     if (this.buffer.length === 0) {
+      // Never pick a number that has already hit the lifetime dial cap.
+      const capSql = this.maxTotalDials > 0 ? 'AND total_dials < :cap' : '';
       this.buffer = await db.query(
-        `SELECT id, name, phone, attempts FROM call_logs
-           WHERE campaign_id = :id AND status = 'queued'
+        `SELECT id, name, phone, attempts, total_dials FROM call_logs
+           WHERE campaign_id = :id AND status = 'queued' ${capSql}
              AND (next_attempt_at IS NULL OR next_attempt_at <= UTC_TIMESTAMP())
            ORDER BY id LIMIT 200`,
-        { id: this.id }
+        { id: this.id, cap: this.maxTotalDials }
       );
     }
     return this.buffer.shift() || null;
@@ -176,7 +181,7 @@ class Runner {
     await db.execute(
       `UPDATE call_logs
           SET status = 'dialing', channel = :channel, dial_start = UTC_TIMESTAMP(),
-              attempts = attempts + 1
+              attempts = attempts + 1, total_dials = total_dials + 1
         WHERE id = :id`,
       { channel: channelId, id: row.id }
     );
@@ -192,6 +197,7 @@ class Runner {
       runner: this,
       finalized: false,
       attempt: (row.attempts || 0) + 1, // this dial is attempt N
+      totalDials: (row.total_dials || 0) + 1, // lifetime dials incl. this one
       amd: this.amdEnabled,
     });
     monitor.publish(this.id, {
@@ -338,10 +344,11 @@ async function finalizeCall(channelId, cause, forcedStatus) {
   const runner = runners.get(call.campaignId);
   const causeVal = cause == null ? null : Number(cause);
 
-  // Retry? Requeue instead of finalizing when the outcome is retryable and this
-  // number still has attempts left. Answered calls are never retried.
+  // Retry? Requeue instead of finalizing when the outcome is retryable, the
+  // number still has attempts left, and it's under the lifetime dial cap.
   const willRetry =
-    runner && shouldRetry(status, call.attempt, runner.maxAttempts, runner.retryOn);
+    runner &&
+    shouldRetry(status, call.attempt, runner.maxAttempts, runner.retryOn, call.totalDials, runner.maxTotalDials);
 
   if (willRetry) {
     await db.execute(
@@ -468,10 +475,13 @@ async function rerunCampaign(campaignId, scope, statuses) {
   }
 
   // Wipe the per-attempt state so the number is eligible to dial again and the
-  // retry logic (max_attempts) applies afresh.
+  // retry logic (max_attempts) applies afresh. `total_dials` is deliberately NOT
+  // reset. Numbers that already hit the lifetime cap are left out of the run.
   const reset = `status = 'queued', channel = NULL, hangup_cause = NULL, attempts = 0,
                  next_attempt_at = NULL, dial_start = NULL, answer_time = NULL,
                  end_time = NULL, duration_sec = NULL`;
+  const cap = config.calls.maxTotalDials;
+  const capSql = cap > 0 ? 'AND total_dials < :cap' : '';
   if (scope === 'unreached') {
     const chosen =
       Array.isArray(statuses) && statuses.length
@@ -479,19 +489,21 @@ async function rerunCampaign(campaignId, scope, statuses) {
         : RERUN_UNREACHED;
     if (chosen.length === 0) return; // nothing selected — no-op, campaign stays finished
     const placeholders = chosen.map((_, i) => `:st${i}`).join(',');
-    const params = { id: campaignId };
+    const params = { id: campaignId, cap };
     chosen.forEach((s, i) => (params[`st${i}`] = s));
-    // Everything is out of this run except the chosen not-reached outcomes.
+    // Everything is out of this run except the chosen not-reached, under-cap numbers.
     await db.execute('UPDATE call_logs SET in_run = 0 WHERE campaign_id = :id', { id: campaignId });
     await db.execute(
       `UPDATE call_logs SET ${reset}, in_run = 1
-        WHERE campaign_id = :id AND status IN (${placeholders})`,
+        WHERE campaign_id = :id AND status IN (${placeholders}) ${capSql}`,
       params
     );
   } else {
+    // Redial all under-cap numbers; capped ones stay finished and out of the run.
+    await db.execute('UPDATE call_logs SET in_run = 0 WHERE campaign_id = :id', { id: campaignId });
     await db.execute(
-      `UPDATE call_logs SET ${reset}, in_run = 1 WHERE campaign_id = :id`,
-      { id: campaignId }
+      `UPDATE call_logs SET ${reset}, in_run = 1 WHERE campaign_id = :id ${capSql}`,
+      { id: campaignId, cap }
     );
   }
 

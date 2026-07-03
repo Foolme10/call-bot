@@ -266,6 +266,7 @@ router.get(
       counts: byStatus,
       active,
       rerunScope: campaign.rerun_scope || null,
+      totalContacts: campaign.total_contacts || 0,
       maxAttempts: campaign.max_attempts || 1,
       retryOn: campaign.retry_on || '',
     });

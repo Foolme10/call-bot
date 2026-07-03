@@ -38,6 +38,7 @@ export default function Monitor() {
   const [campaignStatus, setCampaignStatus] = useState('');
   const [rerunScope, setRerunScope] = useState(null); // 'all' | 'unreached' when this run is a redial
   const [retry, setRetry] = useState({ maxAttempts: 1, retryOn: '' }); // per-number auto-retry settings
+  const [totalContacts, setTotalContacts] = useState(0); // full list size (for redial "X of Y")
   const [active, setActive] = useState({}); // callLogId -> { name, phone, status, at } (in progress)
   const [log, setLog] = useState([]); // completed results, newest first
   const [connected, setConnected] = useState(false);
@@ -80,6 +81,7 @@ export default function Monitor() {
         setCampaignStatus(d.status);
         setRerunScope(d.rerunScope || null);
         setRetry({ maxAttempts: d.maxAttempts || 1, retryOn: d.retryOn || '' });
+        setTotalContacts(d.totalContacts || 0);
         setActive((prev) => {
           const next = {};
           for (const r of d.active || []) {
@@ -252,8 +254,9 @@ export default function Monitor() {
               style={{ background: 'rgba(88,166,255,.12)', color: '#79c0ff', border: '1px solid rgba(88,166,255,.3)' }}
             >
               ↻ This is a <strong>redial</strong> —{' '}
-              {rerunScope === 'all' ? 'dialing all numbers again' : 'dialing only the not-reached numbers'}
-              {' '}({total.toLocaleString()} {total === 1 ? 'lead' : 'leads'} this run).
+              {rerunScope === 'all' ? 'dialing all numbers again' : 'dialing only the not-reached numbers'}:{' '}
+              <strong>{total.toLocaleString()}</strong> of {totalContacts.toLocaleString()} total{' '}
+              {totalContacts === 1 ? 'number' : 'numbers'} this run.
             </div>
           )}
 

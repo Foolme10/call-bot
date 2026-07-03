@@ -141,6 +141,14 @@ export default function Reports() {
             </dl>
           </details>
 
+          {data.campaign?.rerun_scope && (
+            <p className="muted small" style={{ marginBottom: 10 }}>
+              ↻ Last run was a <strong>redial</strong> —{' '}
+              {data.campaign.rerun_scope === 'all' ? 'all numbers' : 'unreached numbers only'}. Results
+              below reflect the most recent run.
+            </p>
+          )}
+
           <div className="table-wrap">
           <table className="table">
             <thead>
@@ -148,21 +156,31 @@ export default function Reports() {
                 <th>Name</th>
                 <th>Number</th>
                 <th>Status</th>
+                <th>Attempts</th>
+                <th>Total dials</th>
               </tr>
             </thead>
             <tbody>
-              {data.rows.map((r) => (
-                <tr key={r.id}>
-                  <td>{r.name || '—'}</td>
-                  <td>{r.phone}</td>
-                  <td>
-                    <span className={`badge ${statusClass(r.status)}`}>{r.statusLabel}</span>
-                  </td>
-                </tr>
-              ))}
+              {data.rows.map((r) => {
+                const capped = data.maxTotalDials > 0 && r.total_dials >= data.maxTotalDials;
+                return (
+                  <tr key={r.id}>
+                    <td>{r.name || '—'}</td>
+                    <td>{r.phone}</td>
+                    <td>
+                      <span className={`badge ${statusClass(r.status)}`}>{r.statusLabel}</span>
+                    </td>
+                    <td>{r.attempts}</td>
+                    <td>
+                      {r.total_dials}
+                      {capped && <span className="badge warn" style={{ marginLeft: 6 }}>max reached</span>}
+                    </td>
+                  </tr>
+                );
+              })}
               {data.rows.length === 0 && (
                 <tr>
-                  <td colSpan="3" className="muted">
+                  <td colSpan="5" className="muted">
                     No matching calls.
                   </td>
                 </tr>

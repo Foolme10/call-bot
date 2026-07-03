@@ -73,6 +73,10 @@ async function main() {
   // reached number skipped by a "redial unreached" run). Lets the monitor/list
   // count and pace off just the numbers being dialed now.
   await ensureColumn('call_logs', 'in_run', 'in_run TINYINT(1) NOT NULL DEFAULT 1 AFTER status');
+  // Lifetime dial counter — increments on every dial and is NEVER reset by a
+  // redial (unlike `attempts`, which is per-run). Powers the reports "Total
+  // dials" column and the lifetime dial cap that stops over-redialing a number.
+  await ensureColumn('call_logs', 'total_dials', 'total_dials INT UNSIGNED NOT NULL DEFAULT 0 AFTER attempts');
   await ensureIndex('call_logs', 'idx_calllogs_queue', 'KEY idx_calllogs_queue (campaign_id, status, next_attempt_at)');
 
   console.log('Migration complete.');

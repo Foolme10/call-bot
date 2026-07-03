@@ -2,6 +2,7 @@
 
 const express = require('express');
 const db = require('../db');
+const config = require('../config');
 const { ApiError, asyncHandler } = require('../http');
 const { requireAuth } = require('../middleware/auth');
 
@@ -26,7 +27,7 @@ const STATUS_LABEL = {
 async function assertOwned(campaignId, user) {
   const isAdmin = user.role === 'admin';
   const rows = await db.query(
-    `SELECT id, name, status FROM campaigns WHERE id = :id ${isAdmin ? '' : 'AND user_id = :uid'}`,
+    `SELECT id, name, status, rerun_scope FROM campaigns WHERE id = :id ${isAdmin ? '' : 'AND user_id = :uid'}`,
     { id: campaignId, uid: user.id }
   );
   if (!rows[0]) throw new ApiError(404, 'Campaign not found');
@@ -70,7 +71,7 @@ router.get(
     const whereSql = where.join(' AND ');
 
     const rows = await db.query(
-      `SELECT id, name, phone, status, hangup_cause, attempts,
+      `SELECT id, name, phone, status, hangup_cause, attempts, total_dials,
               dial_start, answer_time, end_time, duration_sec
          FROM call_logs WHERE ${whereSql}
         ORDER BY id ASC LIMIT :limit OFFSET :offset`,
@@ -91,6 +92,7 @@ router.get(
       campaign,
       summary,
       labels: STATUS_LABEL,
+      maxTotalDials: config.calls.maxTotalDials,
       page,
       pageSize,
       total: Number(filteredTotal),
@@ -117,13 +119,13 @@ router.get(
       const s = String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    res.write('Name,Number,Status,Attempts,Duration (s),Dialed At,Answered At,Ended At\n');
+    res.write('Name,Number,Status,Attempts,Total Dials,Duration (s),Dialed At,Answered At,Ended At\n');
 
     // Keyset pagination keeps memory flat for very large lists.
     let lastId = 0;
     for (;;) {
       const batch = await db.query(
-        `SELECT id, name, phone, status, attempts, duration_sec, dial_start, answer_time, end_time
+        `SELECT id, name, phone, status, attempts, total_dials, duration_sec, dial_start, answer_time, end_time
            FROM call_logs
           WHERE campaign_id = :id AND id > :lastId
           ORDER BY id ASC LIMIT 5000`,
@@ -137,6 +139,7 @@ router.get(
             esc(r.phone),
             esc(STATUS_LABEL[r.status] || r.status),
             esc(r.attempts),
+            esc(r.total_dials),
             esc(r.duration_sec),
             esc(r.dial_start),
             esc(r.answer_time),
