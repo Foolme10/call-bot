@@ -15,6 +15,13 @@ function req(name) {
 // these, so campaigns can't over-dial the trunk (that caused SIP 503 storms).
 const MAX_CONCURRENT_CALLS = Math.max(1, Number(process.env.MAX_CONCURRENT_CALLS || 10));
 const MAX_CPS = Math.max(0.5, Number(process.env.MAX_CPS || 3));
+// Trunk-wide channel budget shared across ALL running campaigns, so their
+// combined live calls never oversubscribe the trunk (e.g. 400 channels).
+// Defaults to the per-campaign ceiling.
+const GLOBAL_MAX_CONCURRENT = Math.max(
+  MAX_CONCURRENT_CALLS,
+  Number(process.env.GLOBAL_MAX_CONCURRENT || MAX_CONCURRENT_CALLS)
+);
 // Optional lifetime cap: never dial one number more than this many times across
 // all runs. Off by default (0) — the per-campaign redial limit (max 3) is the
 // primary guard. Set MAX_TOTAL_DIALS>0 in .env to also cap per number.
@@ -97,6 +104,7 @@ const config = {
     maxConcurrent: MAX_CONCURRENT_CALLS,
     maxCps: MAX_CPS,
     maxTotalDials: MAX_TOTAL_DIALS,
+    globalMaxConcurrent: GLOBAL_MAX_CONCURRENT,
   },
 
   storage: {

@@ -15,6 +15,9 @@ const runners = new Map(); // campaignId -> Runner
 const activeCalls = new Map(); // channelId -> { campaignId, callLogId, answered, media, runner, playbackId }
 const playbackIndex = new Map(); // playbackId -> channelId
 let schedulerTimer = null;
+// Live calls across ALL campaigns right now — the shared trunk budget. Kept in
+// sync one-for-one with activeCalls (++ on dispatch, -- on finalize).
+let globalLive = 0;
 
 const TICK_MS = 250;
 
@@ -122,7 +125,12 @@ class Runner {
       // now). If the loop instead stopped for pacing/concurrency, due rows may
       // still exist, so we must NOT idle/complete — the next tick will dial them.
       let ranDry = false;
-      while (this.running && this.tokens >= 1 && this.live.size < this.maxConcurrent) {
+      while (
+        this.running &&
+        this.tokens >= 1 &&
+        this.live.size < this.maxConcurrent &&
+        globalLive < config.calls.globalMaxConcurrent // shared trunk budget
+      ) {
         const row = await this.takeNext();
         if (!row) {
           ranDry = true;
@@ -176,8 +184,9 @@ class Runner {
     const endpoint = config.dial.endpointTemplate.replace('{number}', row.phone);
 
     // Reserve the row + slot before the async originate so a concurrent pump
-    // can't grab it again.
+    // can't grab it again. globalLive tracks the trunk-wide budget.
     this.live.add(channelId);
+    globalLive += 1;
     await db.execute(
       `UPDATE call_logs
           SET status = 'dialing', channel = :channel, dial_start = UTC_TIMESTAMP(),
@@ -338,6 +347,7 @@ async function finalizeCall(channelId, cause, forcedStatus) {
   if (!call || call.finalized) return;
   call.finalized = true;
   activeCalls.delete(channelId);
+  globalLive = Math.max(0, globalLive - 1);
   if (call.playbackId) playbackIndex.delete(call.playbackId);
 
   const status = forcedStatus || call.outcome || mapCause(cause, call.answered);
@@ -574,6 +584,7 @@ async function onConnect(client) {
   );
   activeCalls.clear();
   playbackIndex.clear();
+  globalLive = 0;
 
   // Resume campaigns that were running before a restart.
   const running = await db.query("SELECT id FROM campaigns WHERE status = 'running'");

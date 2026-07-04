@@ -50,11 +50,26 @@ router.get(
     // Admins (the 'support' super-user) see every user's campaigns; others only
     // their own. `owner` is exposed so an admin can tell whose campaign it is.
     const isAdmin = req.user.role === 'admin';
-    const scope = isAdmin ? '' : 'WHERE c.user_id = :uid';
+    const conds = [];
+    const params = { uid: req.user.id, limit: pageSize, offset };
+    if (!isAdmin) conds.push('c.user_id = :uid');
+
+    // Optional status filter for the Campaigns page tabs.
+    const STATUS_GROUPS = {
+      active: ['running', 'paused'],
+      scheduled: ['scheduled', 'draft'],
+      completed: ['completed', 'stopped', 'failed'],
+    };
+    const group = STATUS_GROUPS[req.query.status];
+    if (group) {
+      conds.push(`c.status IN (${group.map((_, i) => `:cs${i}`).join(',')})`);
+      group.forEach((s, i) => (params[`cs${i}`] = s));
+    }
+    const scope = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
 
     const [{ n: total }] = await db.query(
       `SELECT COUNT(*) AS n FROM campaigns c ${scope}`,
-      { uid: req.user.id }
+      params
     );
     const rows = await db.query(
       `SELECT c.id, c.name, c.status, c.intensity_level, c.cps, c.max_concurrent,
@@ -79,7 +94,7 @@ router.get(
         ${scope}
         ORDER BY c.created_at DESC
         LIMIT :limit OFFSET :offset`,
-      { uid: req.user.id, limit: pageSize, offset }
+      params
     );
     res.json({ campaigns: rows, total: Number(total), page, pageSize, isAdmin });
   })

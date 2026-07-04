@@ -54,10 +54,13 @@ export default function Campaigns() {
   const [rerunScope, setRerunScope] = useState('all'); // 'all' | 'unreached'
   const [rerunStatuses, setRerunStatuses] = useState(RERUN_DEFAULT); // chosen outcomes for 'unreached'
   const [isAdmin, setIsAdmin] = useState(false); // support super-user: sees all users' campaigns
+  const [filter, setFilter] = useState('all'); // all | active | scheduled | completed
 
   async function load(p = page) {
     try {
-      const d = await api.get(`/campaigns?page=${p}&pageSize=${PAGE_SIZE}`);
+      const params = new URLSearchParams({ page: p, pageSize: PAGE_SIZE });
+      if (filter !== 'all') params.set('status', filter);
+      const d = await api.get(`/campaigns?${params}`);
       setCampaigns(d.campaigns);
       setTotal(d.total || d.campaigns.length);
       setIsAdmin(!!d.isAdmin);
@@ -72,7 +75,7 @@ export default function Campaigns() {
     load(page);
     const t = setInterval(() => load(page), 5000); // keep counts/status fresh
     return () => clearInterval(t);
-  }, [page]);
+  }, [page, filter]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -145,11 +148,34 @@ export default function Campaigns() {
           + New campaign
         </Link>
       </div>
+
+      <div className="filters">
+        {[
+          ['all', 'All'],
+          ['active', 'Active'],
+          ['scheduled', 'Scheduled'],
+          ['completed', 'Completed'],
+        ].map(([k, label]) => (
+          <button
+            key={k}
+            className={`btn small ${filter === k ? 'primary' : 'ghost'}`}
+            onClick={() => {
+              setPage(1);
+              setFilter(k);
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {error && <div className="alert error">{error}</div>}
       {loading ? (
         <div className="muted">Loading…</div>
       ) : campaigns.length === 0 ? (
-        <div className="empty">No campaigns yet. Create your first one.</div>
+        <div className="empty">
+          {filter === 'all' ? 'No campaigns yet. Create your first one.' : `No ${filter} campaigns.`}
+        </div>
       ) : (
         <div className={`table-wrap${isAdmin ? ' wide-admin' : ''}`}>
         <table className={`table${isAdmin ? ' table-tight' : ''}`}>
