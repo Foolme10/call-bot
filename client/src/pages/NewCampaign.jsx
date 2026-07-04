@@ -26,6 +26,7 @@ export default function NewCampaign() {
   const [readOnly, setReadOnly] = useState(false); // live campaign: view settings, no edits
   const [campaignStatus, setCampaignStatus] = useState('');
   const [audioPreviewUrl, setAudioPreviewUrl] = useState(''); // object URL for the selected audio
+  const [meta, setMeta] = useState({ audioName: '', callerLabel: '', callerNumber: '' }); // for read-only display
   const [existingContacts, setExistingContacts] = useState(null); // list size when editing
   const [name, setName] = useState('');
   const [callerIds, setCallerIds] = useState([]);
@@ -83,6 +84,11 @@ export default function NewCampaign() {
         setScheduledAt(toLocalInput(cam.scheduled_at));
         setExistingContacts(cam.total_contacts);
         setCampaignStatus(cam.status);
+        setMeta({
+          audioName: cam.audio_name || '',
+          callerLabel: cam.caller_label || '',
+          callerNumber: cam.caller_number || '',
+        });
         // Only campaigns that haven't started can be edited; everything else is
         // view-only (matches the backend, which rejects edits once it's live).
         setReadOnly(!['draft', 'scheduled'].includes(cam.status));
@@ -308,17 +314,23 @@ export default function NewCampaign() {
         <div className="row">
           <div>
             <label>Audio recording *</label>
-            <select value={audioFileId} onChange={(e) => setAudioFileId(e.target.value)}>
-              <option value="">— choose —</option>
-              {audios.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                  {a.duration_sec ? ` (${a.duration_sec}s)` : ''}
-                </option>
-              ))}
-            </select>
-            {audios.length === 0 && (
-              <p className="muted small">No recordings yet — add one on the “Audio & Caller IDs” tab.</p>
+            {readOnly ? (
+              <input value={meta.audioName || '—'} readOnly />
+            ) : (
+              <>
+                <select value={audioFileId} onChange={(e) => setAudioFileId(e.target.value)}>
+                  <option value="">— choose —</option>
+                  {audios.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                      {a.duration_sec ? ` (${a.duration_sec}s)` : ''}
+                    </option>
+                  ))}
+                </select>
+                {audios.length === 0 && (
+                  <p className="muted small">No recordings yet — add one on the “Audio & Caller IDs” tab.</p>
+                )}
+              </>
             )}
             {audioPreviewUrl && (
               <audio
@@ -330,14 +342,21 @@ export default function NewCampaign() {
           </div>
           <div>
             <label>Caller ID</label>
-            <select value={callerIdId} onChange={(e) => setCallerIdId(e.target.value)}>
-              <option value="">— trunk default —</option>
-              {callerIds.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label} ({c.number})
-                </option>
-              ))}
-            </select>
+            {readOnly ? (
+              <input
+                value={meta.callerNumber ? `${meta.callerLabel || ''} (${meta.callerNumber})`.trim() : 'Trunk default'}
+                readOnly
+              />
+            ) : (
+              <select value={callerIdId} onChange={(e) => setCallerIdId(e.target.value)}>
+                <option value="">— trunk default —</option>
+                {callerIds.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label} ({c.number})
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
         </div>
       </section>
@@ -378,6 +397,7 @@ export default function NewCampaign() {
               <option value={2}>2 — dial, then 1 retry</option>
               <option value={3}>3 — dial, then 2 retries</option>
               <option value={4}>4 — dial, then 3 retries</option>
+              <option value={5}>5 — dial, then 4 retries</option>
             </select>
           </div>
           {maxAttempts > 1 && (

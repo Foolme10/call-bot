@@ -59,7 +59,7 @@ router.get(
     const rows = await db.query(
       `SELECT c.id, c.name, c.status, c.intensity_level, c.cps, c.max_concurrent,
               c.schedule_type, c.scheduled_at, c.total_contacts, c.created_at,
-              c.started_at, c.completed_at, c.rerun_scope,
+              c.started_at, c.completed_at, c.rerun_scope, c.redial_count,
               ci.label AS caller_label, ci.number AS caller_number, a.name AS audio_name,
               u.username AS owner,
               COALESCE(s.run_total, 0) AS run_total,
@@ -222,18 +222,28 @@ router.post(
   })
 );
 
-// Detail with per-status counts.
+// Detail with per-status counts. Includes the audio/caller ID NAMES (not just
+// ids) so Inspect can show them even for an admin viewing another user's
+// campaign, where the ids aren't in the viewer's own dropdowns.
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
     const campaign = await getOwnedCampaign(req.params.id, req.user);
+    const [meta] = await db.query(
+      `SELECT a.name AS audio_name, ci.label AS caller_label, ci.number AS caller_number
+         FROM campaigns c
+         LEFT JOIN audio_files a  ON a.id = c.audio_file_id
+         LEFT JOIN caller_ids  ci ON ci.id = c.caller_id_id
+        WHERE c.id = :id`,
+      { id: campaign.id }
+    );
     const counts = await db.query(
       `SELECT status, COUNT(*) AS n FROM call_logs WHERE campaign_id = :id GROUP BY status`,
       { id: campaign.id }
     );
     const byStatus = {};
     counts.forEach((r) => (byStatus[r.status] = Number(r.n)));
-    res.json({ campaign, counts: byStatus });
+    res.json({ campaign: { ...campaign, ...(meta || {}) }, counts: byStatus });
   })
 );
 
@@ -309,6 +319,8 @@ router.post(
 // list; scope=unreached re-dials only the chosen not-reached outcomes. The
 // dialer resets the call logs, marks the current run, and re-paces from how many
 // numbers this run actually dials.
+const MAX_REDIALS = 3; // a finished campaign can be redialed at most this many times
+
 router.post(
   '/:id/rerun',
   asyncHandler(async (req, res) => {
@@ -316,10 +328,19 @@ router.post(
     if (['running', 'paused', 'scheduled'].includes(campaign.status)) {
       throw new ApiError(409, 'Campaign is still active — stop it first');
     }
+    if ((campaign.redial_count || 0) >= MAX_REDIALS) {
+      throw new ApiError(
+        409,
+        `This campaign has reached its redial limit (${MAX_REDIALS}). Create a new campaign to dial again.`
+      );
+    }
     const scope = req.body && req.body.scope === 'unreached' ? 'unreached' : 'all';
     const statuses = Array.isArray(req.body && req.body.statuses) ? req.body.statuses : null;
 
     await dialer.rerunCampaign(campaign.id, scope, statuses);
+    await db.execute('UPDATE campaigns SET redial_count = redial_count + 1 WHERE id = :id', {
+      id: campaign.id,
+    });
     res.json({ ok: true, status: 'running', scope });
   })
 );

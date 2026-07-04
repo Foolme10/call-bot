@@ -160,31 +160,23 @@ export default function Reports() {
                   Listen time
                 </th>
                 <th>Attempts</th>
-                <th>Total dials</th>
               </tr>
             </thead>
             <tbody>
-              {data.rows.map((r) => {
-                const capped = data.maxTotalDials > 0 && r.total_dials >= data.maxTotalDials;
-                return (
-                  <tr key={r.id}>
-                    <td>{r.name || '—'}</td>
-                    <td>{r.phone}</td>
-                    <td>
-                      <span className={`badge ${statusClass(r.status)}`}>{r.statusLabel}</span>
-                    </td>
-                    <td className="muted small">{listenTime(r)}</td>
-                    <td>{r.attempts}</td>
-                    <td>
-                      {r.total_dials}
-                      {capped && <span className="badge warn" style={{ marginLeft: 6 }}>max reached</span>}
-                    </td>
-                  </tr>
-                );
-              })}
+              {data.rows.map((r) => (
+                <tr key={r.id}>
+                  <td>{r.name || '—'}</td>
+                  <td>{r.phone}</td>
+                  <td>
+                    <span className={`badge ${statusClass(r.status)}`}>{r.statusLabel}</span>
+                  </td>
+                  <td className="muted small">{listenTime(r)}</td>
+                  <td>{r.attempts}</td>
+                </tr>
+              ))}
               {data.rows.length === 0 && (
                 <tr>
-                  <td colSpan="6" className="muted">
+                  <td colSpan="5" className="muted">
                     No matching calls.
                   </td>
                 </tr>

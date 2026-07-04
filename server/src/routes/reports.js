@@ -119,13 +119,13 @@ router.get(
       const s = String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    res.write('Name,Number,Status,Attempts,Total Dials,Duration (s),Dialed At,Answered At,Ended At\n');
+    res.write('Name,Number,Status,Attempts,Duration (s),Dialed At,Answered At,Ended At\n');
 
     // Keyset pagination keeps memory flat for very large lists.
     let lastId = 0;
     for (;;) {
       const batch = await db.query(
-        `SELECT id, name, phone, status, attempts, total_dials, duration_sec, dial_start, answer_time, end_time
+        `SELECT id, name, phone, status, attempts, duration_sec, dial_start, answer_time, end_time
            FROM call_logs
           WHERE campaign_id = :id AND id > :lastId
           ORDER BY id ASC LIMIT 5000`,
@@ -139,7 +139,6 @@ router.get(
             esc(r.phone),
             esc(STATUS_LABEL[r.status] || r.status),
             esc(r.attempts),
-            esc(r.total_dials),
             esc(r.duration_sec),
             esc(r.dial_start),
             esc(r.answer_time),

@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 
 const PAGE_SIZE = 25;
+const MAX_REDIALS = 3; // must match the backend cap
 
 const STATUS_CLASS = {
   draft: 'badge',
@@ -215,11 +216,19 @@ export default function Campaigns() {
                         Stop
                       </button>
                     )}
-                    {['completed', 'stopped', 'failed'].includes(c.status) && (
-                      <button className="btn small ok" onClick={() => openRerun(c)}>
-                        Redial
-                      </button>
-                    )}
+                    {['completed', 'stopped', 'failed'].includes(c.status) &&
+                      (c.redial_count >= MAX_REDIALS ? (
+                        <span
+                          className="muted small"
+                          title="Create a new campaign to dial these numbers again"
+                        >
+                          Redial limit reached
+                        </span>
+                      ) : (
+                        <button className="btn small ok" onClick={() => openRerun(c)}>
+                          Redial{c.redial_count > 0 ? ` (${c.redial_count}/${MAX_REDIALS})` : ''}
+                        </button>
+                      ))}
                     <button
                       className="btn small"
                       onClick={() => navigate(`/campaigns/${c.id}/edit`)}

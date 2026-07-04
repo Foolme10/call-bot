@@ -68,6 +68,9 @@ async function main() {
   // Records how the current run was launched: NULL = first run, 'all' = redial
   // everyone, 'unreached' = redial only the chosen not-reached outcomes.
   await ensureColumn('campaigns', 'rerun_scope', 'rerun_scope VARCHAR(16) NULL AFTER amd_enabled');
+  // How many times this campaign has been redialed. Capped so a finished
+  // campaign can't be redialed forever (after the limit, recreate it).
+  await ensureColumn('campaigns', 'redial_count', 'redial_count INT UNSIGNED NOT NULL DEFAULT 0 AFTER rerun_scope');
   await ensureColumn('call_logs', 'next_attempt_at', 'next_attempt_at DATETIME NULL AFTER attempts');
   // 1 = this number is part of the current run; 0 = excluded (e.g. an already-
   // reached number skipped by a "redial unreached" run). Lets the monitor/list

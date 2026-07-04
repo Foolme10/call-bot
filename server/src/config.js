@@ -15,9 +15,10 @@ function req(name) {
 // these, so campaigns can't over-dial the trunk (that caused SIP 503 storms).
 const MAX_CONCURRENT_CALLS = Math.max(1, Number(process.env.MAX_CONCURRENT_CALLS || 10));
 const MAX_CPS = Math.max(0.5, Number(process.env.MAX_CPS || 3));
-// Lifetime cap: never dial one number more than this many times across all runs
-// (retries + redials combined). 0 = unlimited. Guards against over-redialing.
-const MAX_TOTAL_DIALS = Math.max(0, Number(process.env.MAX_TOTAL_DIALS || 8));
+// Optional lifetime cap: never dial one number more than this many times across
+// all runs. Off by default (0) — the per-campaign redial limit (max 3) is the
+// primary guard. Set MAX_TOTAL_DIALS>0 in .env to also cap per number.
+const MAX_TOTAL_DIALS = Math.max(0, Number(process.env.MAX_TOTAL_DIALS || 0));
 
 // Roughly how long an average call ties up a line (ring + message + hangup).
 // Used only to estimate how many lines a list needs to finish in TARGET_MINUTES.
