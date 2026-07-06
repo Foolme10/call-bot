@@ -223,6 +223,19 @@ exten => _.,1,Answer()
 DIALPLAN
 fi
 
+# Raise Asterisk's open-file limit — the default (1024) is exhausted under heavy
+# concurrent dialing and every new channel then fails with "Allocation failed".
+log "Raising Asterisk file-descriptor limit…"
+mkdir -p /etc/systemd/system/asterisk.service.d
+cat > /etc/systemd/system/asterisk.service.d/limits.conf <<'LIMITS'
+[Service]
+LimitNOFILE=65536
+LIMITS
+# maxfiles in asterisk.conf is a second ceiling — comment it out so the systemd
+# limit governs.
+sed -i 's/^\s*maxfiles\s*=/;maxfiles =/I' /etc/asterisk/asterisk.conf 2>/dev/null || true
+
+systemctl daemon-reload
 systemctl enable asterisk >/dev/null 2>&1 || true
 systemctl restart asterisk
 
