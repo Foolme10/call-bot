@@ -377,8 +377,18 @@ export default function NewCampaign() {
               numbers → up to <strong>{estimate.cps}</strong> calls/sec
             </div>
             <div className="muted small">
-              Estimated time to finish: about {estimate.estMinutes} minute
-              {estimate.estMinutes === 1 ? '' : 's'}.
+              Estimated time to finish: about{' '}
+              {estimate.estMinutes +
+                (Number(maxAttempts) > 1
+                  ? (Number(maxAttempts) - 1) * Number(retryDelayMin || 0)
+                  : 0)}{' '}
+              minutes
+              {Number(maxAttempts) > 1
+                ? ` (includes up to ${Number(maxAttempts) - 1} retry round${
+                    maxAttempts - 1 === 1 ? '' : 's'
+                  })`
+                : ''}
+              .
             </div>
           </div>
         )}

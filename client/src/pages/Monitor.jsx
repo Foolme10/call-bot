@@ -338,7 +338,9 @@ export default function Monitor() {
                           </span>
                         )}
                       </td>
-                      <td className="muted small">{mmss(now - new Date(c.at).getTime())}</td>
+                      <td className="muted small">
+                        {c.status === 'answered' ? mmss(now - new Date(c.at).getTime()) : '—'}
+                      </td>
                     </tr>
                   ))}
                   {live.length === 0 && (

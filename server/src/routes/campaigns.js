@@ -85,10 +85,11 @@ router.get(
          LEFT JOIN audio_files a ON a.id = c.audio_file_id
          LEFT JOIN users u ON u.id = c.user_id
          LEFT JOIN (
+              -- Cumulative across all runs so answered grows with each redial.
               SELECT campaign_id,
-                     SUM(in_run = 1) AS run_total,
-                     SUM(in_run = 1 AND status = 'answered') AS answered,
-                     SUM(in_run = 1 AND status NOT IN ('queued','dialing')) AS completed
+                     COUNT(*) AS run_total,
+                     SUM(status = 'answered') AS answered,
+                     SUM(status NOT IN ('queued','dialing')) AS completed
                 FROM call_logs GROUP BY campaign_id
          ) s ON s.campaign_id = c.id
         ${scope}

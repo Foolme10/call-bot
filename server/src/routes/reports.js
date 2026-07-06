@@ -27,7 +27,7 @@ const STATUS_LABEL = {
 async function assertOwned(campaignId, user) {
   const isAdmin = user.role === 'admin';
   const rows = await db.query(
-    `SELECT id, name, status, rerun_scope FROM campaigns WHERE id = :id ${isAdmin ? '' : 'AND user_id = :uid'}`,
+    `SELECT id, name, status, rerun_scope, max_attempts FROM campaigns WHERE id = :id ${isAdmin ? '' : 'AND user_id = :uid'}`,
     { id: campaignId, uid: user.id }
   );
   if (!rows[0]) throw new ApiError(404, 'Campaign not found');

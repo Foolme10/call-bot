@@ -159,7 +159,9 @@ export default function Reports() {
                 <th title="How long an answered call stayed on the line hearing the audio">
                   Listen time
                 </th>
-                <th>Attempts</th>
+                <th title="Which attempt this call was answered/finished on, out of the campaign's max">
+                  Attempt
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -171,7 +173,10 @@ export default function Reports() {
                     <span className={`badge ${statusClass(r.status)}`}>{r.statusLabel}</span>
                   </td>
                   <td className="muted small">{listenTime(r)}</td>
-                  <td>{r.attempts}</td>
+                  <td>
+                    {r.attempts}
+                    {data.campaign?.max_attempts > 1 ? ` / ${data.campaign.max_attempts}` : ''}
+                  </td>
                 </tr>
               ))}
               {data.rows.length === 0 && (
