@@ -52,6 +52,19 @@ sudo -u callbot -H pm2 restart callbot-api
 ```
 (Replace `30` with their real limit. Too high = `503` errors.)
 
+## Step 5b — (Optional) Enable SMS blasting for this customer
+Only if the customer will send SMS. Each customer has their **own** gateway key.
+Paste their key in place of `THEIR_KEY_HERE` (this adds or replaces the line):
+```
+sudo sed -i '/^SMS_AUTH_KEY=/d' /opt/call-bot/server/.env
+echo 'SMS_AUTH_KEY=THEIR_KEY_HERE' | sudo tee -a /opt/call-bot/server/.env >/dev/null
+sudo -u callbot -H pm2 restart callbot-api
+```
+Leave it blank/unset to keep SMS off (voice still works). To send at a different
+rate, also set `SMS_MAX_CPS=` / `SMS_MAX_CONCURRENT=` the same way.
+In the app, a campaign's **SMS** option then works — write the message with
+`{name}` / `{amount}` variables filled from the uploaded list.
+
 ## Step 6 — Point the web app at the new IP
 ```
 IP=$(hostname -I | awk '{print $1}'); sudo sed -i "s#^CORS_ORIGIN=.*#CORS_ORIGIN=http://$IP#" /opt/call-bot/server/.env && sudo -u callbot -H pm2 restart callbot-api
@@ -98,6 +111,7 @@ After a server reboot everything auto-starts — just confirm with the health ch
 | Audio: "does not exist in any format" | File path/permissions — escalate to L2 |
 | Rings but no sound | Add `directmedia=no` and `nat=force_rport,comedia` to the `[trunk]`, restart asterisk |
 | Campaign too slow | Raise `MAX_CONCURRENT_CALLS` (Step 5) and make a **new** campaign (speed locks at creation) |
+| SMS won't send / "gateway not configured" | Set the customer's `SMS_AUTH_KEY` (Step 5b) → `pm2 restart`. Per-recipient failures show the gateway reason in Reports (e.g. *Insufficient credit*). |
 
 ---
 

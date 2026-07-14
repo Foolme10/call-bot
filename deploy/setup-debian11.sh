@@ -281,6 +281,13 @@ MAX_CPS=$MAX_CPS
 AVG_CALL_SECONDS=20
 TARGET_MINUTES=30
 
+# ── SMS blasting (nuavox gateway) ──
+# This customer's OWN gateway key goes here. Blank = SMS disabled (voice still works).
+SMS_API_URL=http://sms.nuavox.com/api
+SMS_AUTH_KEY=
+SMS_MAX_CPS=10
+SMS_MAX_CONCURRENT=20
+
 AUDIO_DIR=$AUDIO_DIR
 UPLOAD_TMP_DIR=$APP_DIR/server/uploads/tmp
 FFMPEG_PATH=ffmpeg
