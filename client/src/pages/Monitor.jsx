@@ -24,6 +24,7 @@ const RESULT_LABEL = {
 };
 
 const TERMINAL = ['answered', 'busy', 'no_answer', 'failed', 'congestion', 'machine'];
+const TERMINAL_SMS = ['sent', 'failed'];
 
 function mmss(ms) {
   if (!ms || ms < 0) return '0:00';
@@ -35,6 +36,7 @@ export default function Monitor() {
   const [campaigns, setCampaigns] = useState([]);
   const [campaignId, setCampaignId] = useState('');
   const [counts, setCounts] = useState({});
+  const [channel, setChannel] = useState('voice');
   const [campaignStatus, setCampaignStatus] = useState('');
   const [rerunScope, setRerunScope] = useState(null); // 'all' | 'unreached' when this run is a redial
   const [retry, setRetry] = useState({ maxAttempts: 1, retryOn: '' }); // per-number auto-retry settings
@@ -78,6 +80,7 @@ export default function Monitor() {
         const d = await api.get(`/campaigns/${campaignId}/monitor`);
         if (!live) return;
         setCounts(d.counts);
+        setChannel(d.channel || 'voice');
         setCampaignStatus(d.status);
         setRerunScope(d.rerunScope || null);
         setRetry({ maxAttempts: d.maxAttempts || 1, retryOn: d.retryOn || '' });
@@ -194,11 +197,12 @@ export default function Monitor() {
   }, [campaignId]);
 
   // Derived metrics from the snapshot counts.
+  const isSms = channel === 'sms';
   const n = (k) => Number(counts[k] || 0);
   const total = Object.values(counts).reduce((a, b) => a + Number(b), 0);
-  const done = TERMINAL.reduce((a, k) => a + n(k), 0);
-  const answered = n('answered');
-  const answerRate = done > 0 ? Math.round((answered / done) * 100) : 0;
+  const done = (isSms ? TERMINAL_SMS : TERMINAL).reduce((a, k) => a + n(k), 0);
+  const success = isSms ? n('sent') : n('answered');
+  const successRate = done > 0 ? Math.round((success / done) * 100) : 0;
   const progress = total > 0 ? Math.round((done / total) * 100) : 0;
 
   const live = Object.values(active).sort((a, b) => (a.at < b.at ? 1 : -1));
@@ -239,7 +243,7 @@ export default function Monitor() {
         )}
         {selected && (
           <span className="muted small" style={{ alignSelf: 'center' }}>
-            up to {selected.cps} calls/sec
+            up to {selected.cps} {selected.channel === 'sms' ? 'messages/sec' : 'calls/sec'}
           </span>
         )}
       </div>
@@ -272,45 +276,71 @@ export default function Monitor() {
           <div className="progress">
             <div className="progress-fill" style={{ width: `${progress}%` }} />
             <span className="progress-label">
-              {done} / {total} dialed · {progress}%
+              {done} / {total} {isSms ? 'sent' : 'dialed'} · {progress}%
             </span>
           </div>
 
-          <div className="summary-cards">
-            <div className="summary-card hl">
-              <div className="num">{live.length}</div>
-              <div className="muted small">Active calls</div>
+          {isSms ? (
+            <div className="summary-cards">
+              <div className="summary-card hl">
+                <div className="num">{live.length}</div>
+                <div className="muted small">Sending now</div>
+              </div>
+              <div className="summary-card">
+                <div className="num ok-text">{success}</div>
+                <div className="muted small">Sent</div>
+              </div>
+              <div className="summary-card">
+                <div className="num">{successRate}%</div>
+                <div className="muted small">Success rate</div>
+              </div>
+              <div className="summary-card">
+                <div className="num">{n('failed')}</div>
+                <div className="muted small">Failed</div>
+              </div>
+              <div className="summary-card">
+                <div className="num">{n('queued')}</div>
+                <div className="muted small">Remaining</div>
+              </div>
             </div>
-            <div className="summary-card">
-              <div className="num ok-text">{answered}</div>
-              <div className="muted small">Answered</div>
+          ) : (
+            <div className="summary-cards">
+              <div className="summary-card hl">
+                <div className="num">{live.length}</div>
+                <div className="muted small">Active calls</div>
+              </div>
+              <div className="summary-card">
+                <div className="num ok-text">{success}</div>
+                <div className="muted small">Answered</div>
+              </div>
+              <div className="summary-card">
+                <div className="num">{successRate}%</div>
+                <div className="muted small">Answer rate</div>
+              </div>
+              <div className="summary-card">
+                <div className="num">{n('busy')}</div>
+                <div className="muted small">Busy</div>
+              </div>
+              <div className="summary-card">
+                <div className="num">{n('no_answer')}</div>
+                <div className="muted small">No answer</div>
+              </div>
+              <div className="summary-card" title={`${HELP.failed}\n\n${HELP.congestion}`}>
+                <div className="num">{n('failed') + n('congestion')}</div>
+                <div className="muted small">Not connected</div>
+              </div>
+              <div className="summary-card">
+                <div className="num">{n('queued')}</div>
+                <div className="muted small">Remaining</div>
+              </div>
             </div>
-            <div className="summary-card">
-              <div className="num">{answerRate}%</div>
-              <div className="muted small">Answer rate</div>
-            </div>
-            <div className="summary-card">
-              <div className="num">{n('busy')}</div>
-              <div className="muted small">Busy</div>
-            </div>
-            <div className="summary-card">
-              <div className="num">{n('no_answer')}</div>
-              <div className="muted small">No answer</div>
-            </div>
-            <div className="summary-card" title={`${HELP.failed}\n\n${HELP.congestion}`}>
-              <div className="num">{n('failed') + n('congestion')}</div>
-              <div className="muted small">Not connected</div>
-            </div>
-            <div className="summary-card">
-              <div className="num">{n('queued')}</div>
-              <div className="muted small">Remaining</div>
-            </div>
-          </div>
+          )}
 
-          {/* Live: only calls that are actually up right now. */}
+          {/* Live: only calls/sends that are actually in progress right now. */}
           <section className="card">
             <h3>
-              Active Calls <span className="muted small">({live.length})</span>
+              {isSms ? 'Sending now' : 'Active Calls'}{' '}
+              <span className="muted small">({live.length})</span>
             </h3>
             <div className="table-wrap">
               <table className="table">
@@ -319,7 +349,7 @@ export default function Monitor() {
                     <th>Number</th>
                     <th>Name</th>
                     <th>Status</th>
-                    <th>Duration</th>
+                    {!isSms && <th>Duration</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -329,7 +359,7 @@ export default function Monitor() {
                       <td>{c.name || '—'}</td>
                       <td>
                         <span className={`badge ${c.status === 'answered' ? 'ok' : 'info'}`}>
-                          {c.status === 'answered' ? 'Connected' : 'Ringing'}
+                          {isSms ? 'Sending' : c.status === 'answered' ? 'Connected' : 'Ringing'}
                         </span>
                         {c.attempt > 1 && (
                           <span className="badge warn" style={{ marginLeft: 6 }}>
@@ -338,15 +368,17 @@ export default function Monitor() {
                           </span>
                         )}
                       </td>
-                      <td className="muted small">
-                        {c.status === 'answered' ? mmss(now - new Date(c.at).getTime()) : '—'}
-                      </td>
+                      {!isSms && (
+                        <td className="muted small">
+                          {c.status === 'answered' ? mmss(now - new Date(c.at).getTime()) : '—'}
+                        </td>
+                      )}
                     </tr>
                   ))}
                   {live.length === 0 && (
                     <tr>
-                      <td colSpan="4" className="muted">
-                        No active calls at the moment.
+                      <td colSpan={isSms ? 3 : 4} className="muted">
+                        {isSms ? 'No messages sending at the moment.' : 'No active calls at the moment.'}
                       </td>
                     </tr>
                   )}

@@ -61,8 +61,13 @@ CREATE TABLE IF NOT EXISTS campaigns (
   id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   user_id         BIGINT UNSIGNED NOT NULL,
   name            VARCHAR(128) NOT NULL,
+  -- Broadcast channel: 'voice' dials via Asterisk, 'sms' blasts via the SMS
+  -- gateway. Voice uses audio_file_id/caller_id_id; SMS uses message_template.
+  channel         ENUM('voice','sms') NOT NULL DEFAULT 'voice',
   caller_id_id    BIGINT UNSIGNED NULL,
   audio_file_id   BIGINT UNSIGNED NULL,
+  -- SMS body with {name}/{amount} placeholders, filled per-recipient at send.
+  message_template TEXT NULL,
   intensity_level TINYINT      NOT NULL DEFAULT 1,   -- 1=Safe, 2=Balanced, 3=Fast
   cps             DECIMAL(4,1) NOT NULL DEFAULT 1.0, -- calls launched per second
   max_concurrent  INT UNSIGNED NOT NULL DEFAULT 20,  -- max simultaneous live calls
@@ -95,6 +100,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   campaign_id BIGINT UNSIGNED NOT NULL,
   name        VARCHAR(128) NULL,
   phone       VARCHAR(32)  NOT NULL,
+  amount      VARCHAR(64)  NULL,   -- optional per-recipient value for the SMS {amount} variable
   created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_contacts_campaign (campaign_id),
@@ -112,9 +118,14 @@ CREATE TABLE IF NOT EXISTS call_logs (
   contact_id    BIGINT UNSIGNED NULL,
   name          VARCHAR(128) NULL,
   phone         VARCHAR(32)  NOT NULL,
-  status        ENUM('queued','dialing','answered','busy','no_answer','failed','congestion','machine')
+  amount        VARCHAR(64)  NULL,   -- SMS: per-recipient {amount} value, copied from contacts
+  -- Voice outcomes: answered/busy/no_answer/failed/congestion/machine.
+  -- SMS outcomes: 'sent' (gateway accepted) / 'failed'. 'dialing' doubles as the
+  -- in-flight marker for SMS ("sending"). 'queued' = not yet dialed/sent.
+  status        ENUM('queued','dialing','answered','busy','no_answer','failed','congestion','machine','sent')
                   NOT NULL DEFAULT 'queued',
-  hangup_cause  INT NULL,
+  hangup_cause  INT NULL,          -- voice: Q.850 code; SMS: raw gateway status code
+  error_detail  VARCHAR(255) NULL, -- SMS: human-readable failure reason (e.g. "Insufficient credit")
   channel       VARCHAR(128) NULL,            -- Asterisk channel id, for live monitor
   attempts      TINYINT UNSIGNED NOT NULL DEFAULT 0,
   next_attempt_at DATETIME NULL,              -- when a requeued retry becomes eligible to dial

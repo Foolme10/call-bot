@@ -18,6 +18,7 @@ const campaignRoutes = require('./routes/campaigns');
 const reportRoutes = require('./routes/reports');
 
 const dialer = require('./services/dialer');
+const smsSender = require('./services/smsSender');
 const monitor = require('./ws/monitor');
 
 const app = express();
@@ -71,6 +72,10 @@ async function start() {
   // A failure here is non-fatal: the web app still runs, dialing is just paused.
   dialer.start().catch((e) => logger.error('Dialer failed to start:', e.message));
 
+  // Start the SMS engine (scheduler + resume). Independent of ARI, so it runs
+  // even when telephony is down. Non-fatal on failure.
+  smsSender.start().catch((e) => logger.error('SMS sender failed to start:', e.message));
+
   server.listen(config.port, () => {
     logger.info(`call-bot API listening on :${config.port} (${config.env})`);
   });
@@ -79,6 +84,7 @@ async function start() {
 function shutdown(signal) {
   logger.info(`${signal} received, shutting down…`);
   dialer.stop();
+  smsSender.stop();
   server.close(() => {
     db.pool.end().finally(() => process.exit(0));
   });

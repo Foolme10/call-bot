@@ -1,31 +1,37 @@
 # call-bot
 
-A self-hosted **voice broadcasting** platform. Upload a contact list, pick a
-pre-recorded message and a caller ID, choose how fast to dial, and call-bot
-auto-dials everyone, plays the message, and logs the outcome — with live
-monitoring and reporting.
+A self-hosted **voice & SMS broadcasting** platform. Upload a contact list and
+either (a) pick a pre-recorded message + caller ID and auto-dial everyone, or
+(b) write an SMS with `{name}`/`{amount}` variables and blast it to the whole
+list — both with automatic pacing, live monitoring, and reporting.
 
-- **Engine:** Asterisk (via ARI) + your SIP trunk
+- **Engine:** Asterisk (via ARI) + your SIP trunk for voice; an HTTP SMS gateway
+  (nuavox) for SMS.
 - **Backend:** Node.js (Express) + MySQL
 - **Frontend:** React (Vite)
 - **Target server:** Linux (Ubuntu/Debian). You can develop the web app on
-  Windows, but Asterisk only runs on Linux.
+  Windows, but Asterisk only runs on Linux. (SMS-only use needs no Asterisk.)
 
 ---
 
 ## Features
 
 1. **Login** — username/password (bcrypt + JWT). Create accounts with a script.
-2. **Campaigns** — run-now or scheduled, per-campaign caller ID, audio dropdown,
-   automatic dialing speed (paced to list size + trunk capacity), configurable
-   redial (multi-attempt), optional answering-machine detection, CSV/Excel
+2. **Campaigns** — pick a channel (**Voice** or **SMS**), run-now or scheduled,
+   automatic pacing (to list size + capacity), configurable retries, CSV/Excel
    contact upload with column mapping.
+   - **Voice:** per-campaign caller ID, audio dropdown, optional answering-machine
+     detection.
+   - **SMS:** a message with `{name}` / `{amount}` variables filled per recipient
+     from the contact list (map a **name** and an **amount** column). No caller ID —
+     the SMS gateway sets the sender.
 3. **Audio & Caller IDs** — upload recordings (auto-converted for Asterisk) and
-   manage caller IDs; both feed the campaign dropdowns.
-4. **Reports** — per-campaign call list (name, number, status) + summary + CSV
-   export. Statuses: Answered / Busy / No Answer / Failed / Congestion.
-5. **Live Monitor** — real-time view (WebSocket) of which number is dialing and
-   its status.
+   manage caller IDs; both feed the voice campaign dropdowns.
+4. **Reports** — per-campaign list (name, number, status) + summary + CSV export.
+   Voice statuses: Answered / Busy / No Answer / Failed / Congestion.
+   SMS statuses: Sent / Failed (with the gateway's reason) / Not Sent.
+5. **Live Monitor** — real-time view (WebSocket) of which number is dialing/sending
+   and its outcome.
 
 ---
 
@@ -96,6 +102,34 @@ the app; the backend reads `AMDSTATUS` to decide. Detection adds a few seconds o
 analysis before the message starts. Tune sensitivity in `/etc/asterisk/amd.conf`
 (Asterisk ships working defaults). Note AMD is heuristic — no detector is 100%
 accurate.
+
+### SMS blasting
+
+Pick **SMS** as the campaign channel to send a text instead of a call. Everything
+else works the same — upload a list, auto-pace, retries, schedule, monitor,
+report — but instead of an audio file you write a **message**:
+
+- **Variables:** insert `{name}` and `{amount}`; they're filled per recipient
+  from the columns you map (`{amount}` comes from an **Amount** column, e.g. a
+  balance due). Missing values substitute to an empty string.
+- **No caller ID** — the SMS gateway sets the sender.
+- **Statuses:** a message the gateway accepts is **Sent**; a rejected one is
+  **Failed** with the gateway's reason (e.g. *Insufficient credit*). Only
+  transient gateway errors are retried; permanent rejects aren't.
+
+Configure the gateway once in `server/.env`:
+
+```
+SMS_API_URL=http://sms.nuavox.com/api   # GET ...?action=send-sms&auth-key=..&to=..&content=..
+SMS_AUTH_KEY=your-gateway-key           # blank = SMS disabled (campaigns won't start)
+SMS_MAX_CPS=10                          # max messages launched per second
+SMS_MAX_CONCURRENT=20                   # max simultaneous in-flight sends
+```
+
+SMS needs no Asterisk/SIP trunk, so the app can run SMS-only. The gateway
+returns a status code synchronously (`1` = queued for sending); there is no
+delivery receipt, so **Sent** means "accepted by the gateway", not "delivered
+to the handset".
 
 ---
 

@@ -579,15 +579,22 @@ async function finalizeCampaign(campaignId, status) {
 async function onConnect(client) {
   registerHandlers(client);
   // A reconnect orphans any in-flight channels; reset them so they get redialed.
+  // Scope to voice campaigns so an ARI reconnect never touches an SMS campaign's
+  // in-flight ('dialing') rows, which the SMS engine owns.
   await db.execute(
-    "UPDATE call_logs SET status = 'queued', channel = NULL WHERE status = 'dialing'"
+    `UPDATE call_logs SET status = 'queued', channel = NULL
+      WHERE status = 'dialing'
+        AND campaign_id IN (SELECT id FROM campaigns WHERE channel = 'voice')`
   );
   activeCalls.clear();
   playbackIndex.clear();
   globalLive = 0;
 
-  // Resume campaigns that were running before a restart.
-  const running = await db.query("SELECT id FROM campaigns WHERE status = 'running'");
+  // Resume voice campaigns that were running before a restart. SMS campaigns
+  // are resumed independently by smsSender (they don't use ARI).
+  const running = await db.query(
+    "SELECT id FROM campaigns WHERE status = 'running' AND channel = 'voice'"
+  );
   for (const c of running) {
     try {
       await startCampaign(c.id);
@@ -600,7 +607,7 @@ async function onConnect(client) {
 async function checkScheduled() {
   try {
     const due = await db.query(
-      "SELECT id FROM campaigns WHERE status = 'scheduled' AND scheduled_at <= UTC_TIMESTAMP()"
+      "SELECT id FROM campaigns WHERE status = 'scheduled' AND channel = 'voice' AND scheduled_at <= UTC_TIMESTAMP()"
     );
     for (const c of due) {
       logger.info(`Scheduled campaign ${c.id} is due, starting`);

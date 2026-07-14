@@ -82,7 +82,7 @@ h3 { margin: 0 0 12px; }
 
 /* Forms */
 label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
-input, select {
+input, select, textarea {
   width: 100%;
   padding: 9px 10px;
   background: var(--panel-2);
@@ -91,7 +91,8 @@ input, select {
   color: var(--text);
   font-size: 14px;
 }
-input:focus, select:focus { outline: none; border-color: var(--primary); }
+textarea { font-family: inherit; resize: vertical; min-height: 88px; line-height: 1.4; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--primary); }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .inline-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
 .inline-form input { width: auto; flex: 1; min-width: 140px; }

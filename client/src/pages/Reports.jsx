@@ -1,14 +1,20 @@
 import { useEffect, useState } from 'react';
 import { api, downloadCsv } from '../api.js';
 
-// The three outcomes that matter on a broadcast report, front and center.
+// The outcomes that matter on a broadcast report, front and center.
 const HEADLINE = [
   { k: 'answered', label: 'Answered', cls: 'ok-text' },
   { k: 'no_answer', label: 'No Answer' },
   { k: 'busy', label: 'Busy' },
 ];
+const HEADLINE_SMS = [
+  { k: 'sent', label: 'Sent', cls: 'ok-text' },
+  { k: 'failed', label: 'Failed' },
+  { k: 'queued', label: 'Not Sent' },
+];
 // The rest — only shown when they actually occurred.
 const OTHER = ['machine', 'congestion', 'failed', 'queued', 'dialing'];
+const OTHER_SMS = ['dialing'];
 
 // Plain-English meaning of every status, so "failed" and "congestion" aren't a mystery.
 const HELP = {
@@ -23,6 +29,10 @@ const HELP = {
   queued: 'The campaign was stopped before this number was dialed.',
 };
 const LEGEND_ORDER = ['answered', 'no_answer', 'busy', 'congestion', 'failed', 'machine'];
+// Which statuses can appear for each channel — used to trim the filter dropdown
+// so it never lists options that always return zero rows.
+const SMS_STATUSES = ['sent', 'failed', 'queued', 'dialing'];
+const SMS_ONLY = ['sent']; // voice reports should not offer these
 
 export default function Reports() {
   const [campaigns, setCampaigns] = useState([]);
@@ -62,6 +72,9 @@ export default function Reports() {
   }, [campaignId, status, page]);
 
   const labels = data?.labels || {};
+  const isSms = data?.campaign?.channel === 'sms';
+  const headline = isSms ? HEADLINE_SMS : HEADLINE;
+  const other = isSms ? OTHER_SMS : OTHER;
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
 
   return (
@@ -97,11 +110,13 @@ export default function Reports() {
           <>
             <select value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }}>
               <option value="">All statuses</option>
-              {Object.entries(labels).map(([k, v]) => (
-                <option key={k} value={k}>
-                  {v}
-                </option>
-              ))}
+              {Object.entries(labels)
+                .filter(([k]) => (isSms ? SMS_STATUSES.includes(k) : !SMS_ONLY.includes(k)))
+                .map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {v}
+                  </option>
+                ))}
             </select>
             <form onSubmit={(e) => { e.preventDefault(); setPage(1); load(); }}>
               <input placeholder="Search name or number" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -113,13 +128,13 @@ export default function Reports() {
       {data && (
         <>
           <div className="summary-cards">
-            {HEADLINE.map(({ k, label, cls }) => (
+            {headline.map(({ k, label, cls }) => (
               <div key={k} className="summary-card" title={HELP[k]}>
                 <div className={`num ${cls || ''}`}>{data.summary[k] || 0}</div>
                 <div className="muted small">{label}</div>
               </div>
             ))}
-            {OTHER.filter((k) => data.summary[k]).map((k) => (
+            {other.filter((k) => data.summary[k]).map((k) => (
               <div key={k} className="summary-card" title={HELP[k] || ''}>
                 <div className="num">{data.summary[k]}</div>
                 <div className="muted small">{labels[k]}</div>
@@ -127,19 +142,21 @@ export default function Reports() {
             ))}
           </div>
 
-          <details className="legend">
-            <summary>What do these statuses mean?</summary>
-            <dl>
-              {LEGEND_ORDER.map((k) => (
-                <div key={k} className="legend-row">
-                  <dt>
-                    <span className={`badge ${statusClass(k)}`}>{labels[k] || k}</span>
-                  </dt>
-                  <dd className="muted small">{HELP[k]}</dd>
-                </div>
-              ))}
-            </dl>
-          </details>
+          {!isSms && (
+            <details className="legend">
+              <summary>What do these statuses mean?</summary>
+              <dl>
+                {LEGEND_ORDER.map((k) => (
+                  <div key={k} className="legend-row">
+                    <dt>
+                      <span className={`badge ${statusClass(k)}`}>{labels[k] || k}</span>
+                    </dt>
+                    <dd className="muted small">{HELP[k]}</dd>
+                  </div>
+                ))}
+              </dl>
+            </details>
+          )}
 
           {data.campaign?.rerun_scope && (
             <p className="muted small" style={{ marginBottom: 10 }}>
@@ -156,10 +173,14 @@ export default function Reports() {
                 <th>Name</th>
                 <th>Number</th>
                 <th>Status</th>
-                <th title="How long an answered call stayed on the line hearing the audio">
-                  Listen time
-                </th>
-                <th title="Which attempt this call was answered/finished on, out of the campaign's max">
+                {isSms ? (
+                  <th title="Why a message failed, as reported by the gateway">Detail</th>
+                ) : (
+                  <th title="How long an answered call stayed on the line hearing the audio">
+                    Listen time
+                  </th>
+                )}
+                <th title={`Which attempt this ${isSms ? 'message was sent' : 'call was answered/finished'} on, out of the campaign's max`}>
                   Attempt
                 </th>
               </tr>
@@ -172,7 +193,11 @@ export default function Reports() {
                   <td>
                     <span className={`badge ${statusClass(r.status)}`}>{r.statusLabel}</span>
                   </td>
-                  <td className="muted small">{listenTime(r)}</td>
+                  {isSms ? (
+                    <td className="muted small">{r.error_detail || '—'}</td>
+                  ) : (
+                    <td className="muted small">{listenTime(r)}</td>
+                  )}
                   <td>
                     {r.attempts}
                     {data.campaign?.max_attempts > 1 ? ` / ${data.campaign.max_attempts}` : ''}
@@ -182,7 +207,7 @@ export default function Reports() {
               {data.rows.length === 0 && (
                 <tr>
                   <td colSpan="5" className="muted">
-                    No matching calls.
+                    No matching {isSms ? 'messages' : 'calls'}.
                   </td>
                 </tr>
               )}
@@ -195,7 +220,7 @@ export default function Reports() {
               ← Prev
             </button>
             <span className="muted">
-              Page {page} of {totalPages} · {data.total} calls
+              Page {page} of {totalPages} · {data.total} {isSms ? 'messages' : 'calls'}
             </span>
             <button className="btn small" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
               Next →
@@ -208,7 +233,7 @@ export default function Reports() {
 }
 
 function statusClass(s) {
-  if (s === 'answered') return 'ok';
+  if (s === 'answered' || s === 'sent') return 'ok';
   if (s === 'busy' || s === 'no_answer') return 'warn';
   if (s === 'failed' || s === 'congestion') return 'error';
   return '';

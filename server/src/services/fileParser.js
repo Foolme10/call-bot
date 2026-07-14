@@ -59,14 +59,16 @@ function preview(filePath, sampleSize = 5) {
   return { columns, sample: rows.slice(0, sampleSize), totalRows: rows.length };
 }
 
-// Step 2: pull just the chosen name + number columns, normalize, drop invalids.
-// Returns { contacts: [{name, phone}], total, valid, invalid }.
-function extractContacts(filePath, nameColumn, numberColumn) {
+// Step 2: pull the chosen name + number (+ optional amount) columns, normalize,
+// drop invalids. `amountColumn` feeds the SMS {amount} variable (ignored for
+// voice). Returns { contacts: [{name, phone, amount}], total, valid, invalid }.
+function extractContacts(filePath, nameColumn, numberColumn, amountColumn) {
   const { columns, rows } = readTable(filePath);
   if (!columns.includes(numberColumn)) {
     throw new Error(`Number column "${numberColumn}" not found in file`);
   }
   const hasName = nameColumn && columns.includes(nameColumn);
+  const hasAmount = amountColumn && columns.includes(amountColumn);
 
   const contacts = [];
   let invalid = 0;
@@ -77,7 +79,8 @@ function extractContacts(filePath, nameColumn, numberColumn) {
       continue;
     }
     const name = hasName ? String(row[nameColumn] ?? '').trim().slice(0, 128) : null;
-    contacts.push({ name: name || null, phone });
+    const amount = hasAmount ? String(row[amountColumn] ?? '').trim().slice(0, 64) : null;
+    contacts.push({ name: name || null, phone, amount: amount || null });
   }
   return { contacts, total: rows.length, valid: contacts.length, invalid };
 }

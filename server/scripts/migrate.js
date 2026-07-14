@@ -59,6 +59,15 @@ async function main() {
       console.log(`  + index ${table}.${index}`);
     }
   };
+  // True when an ENUM column already lists `value` among its allowed options.
+  const enumHasValue = async (table, column, value) => {
+    const [r] = await conn.query(
+      `SELECT COLUMN_TYPE AS t FROM information_schema.columns
+        WHERE table_schema = ? AND table_name = ? AND column_name = ?`,
+      [db, table, column]
+    );
+    return r[0] ? r[0].t.includes(`'${value}'`) : false;
+  };
 
   // Redial / multi-attempt columns.
   await ensureColumn('campaigns', 'max_attempts', 'max_attempts TINYINT UNSIGNED NOT NULL DEFAULT 1 AFTER max_concurrent');
@@ -81,6 +90,23 @@ async function main() {
   // dials" column and the lifetime dial cap that stops over-redialing a number.
   await ensureColumn('call_logs', 'total_dials', 'total_dials INT UNSIGNED NOT NULL DEFAULT 0 AFTER attempts');
   await ensureIndex('call_logs', 'idx_calllogs_queue', 'KEY idx_calllogs_queue (campaign_id, status, next_attempt_at)');
+
+  // ── SMS broadcasting ───────────────────────────────────────────────────────
+  // Channel selector + SMS body template on campaigns; per-recipient {amount}
+  // value on contacts; and on call_logs a 'sent' status plus a failure reason.
+  await ensureColumn('campaigns', 'channel', "channel ENUM('voice','sms') NOT NULL DEFAULT 'voice' AFTER name");
+  await ensureColumn('campaigns', 'message_template', 'message_template TEXT NULL AFTER audio_file_id');
+  await ensureColumn('contacts', 'amount', 'amount VARCHAR(64) NULL AFTER phone');
+  await ensureColumn('call_logs', 'amount', 'amount VARCHAR(64) NULL AFTER phone');
+  await ensureColumn('call_logs', 'error_detail', 'error_detail VARCHAR(255) NULL AFTER hangup_cause');
+  if (!(await enumHasValue('call_logs', 'status', 'sent'))) {
+    await conn.query(
+      `ALTER TABLE \`call_logs\` MODIFY COLUMN status
+        ENUM('queued','dialing','answered','busy','no_answer','failed','congestion','machine','sent')
+        NOT NULL DEFAULT 'queued'`
+    );
+    console.log("  + call_logs.status enum value 'sent'");
+  }
 
   console.log('Migration complete.');
   await conn.end();

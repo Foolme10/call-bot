@@ -24,11 +24,18 @@ const RERUN_OUTCOMES = [
   ['congestion', 'Congestion'],
   ['queued', 'Not Dialed'],
 ];
+// SMS only ever produces failed / not-sent outcomes; mirror the server's
+// RERUN_UNREACHED for SMS so the dialog can't offer voice-only options.
+const RERUN_OUTCOMES_SMS = [
+  ['failed', 'Failed'],
+  ['queued', 'Not Sent'],
+];
+const rerunOutcomesFor = (channel) => (channel === 'sms' ? RERUN_OUTCOMES_SMS : RERUN_OUTCOMES);
 const RERUN_DEFAULT = RERUN_OUTCOMES.map(([k]) => k);
 
 // Labels for the per-status counts in the detail view. 'queued' reads
-// differently depending on whether the campaign can still dial it.
-function countLabel(key, finished) {
+// differently depending on whether the campaign can still dial/send it.
+function countLabel(key, finished, isSms) {
   const labels = {
     answered: 'Answered',
     no_answer: 'No Answer',
@@ -36,8 +43,9 @@ function countLabel(key, finished) {
     failed: 'Failed',
     congestion: 'Congestion',
     machine: 'Answering Machine',
-    dialing: 'Dialing',
-    queued: finished ? 'Not Dialed' : 'Waiting',
+    sent: 'Sent',
+    dialing: isSms ? 'Sending' : 'Dialing',
+    queued: finished ? (isSms ? 'Not Sent' : 'Not Dialed') : 'Waiting',
   };
   return labels[key] || key;
 }
@@ -102,7 +110,7 @@ export default function Campaigns() {
   // numbers each choice will dial.
   async function openRerun(c) {
     setRerunScope('all');
-    setRerunStatuses(RERUN_DEFAULT);
+    setRerunStatuses(rerunOutcomesFor(c.channel).map(([k]) => k));
     setRerunFor(c); // show immediately; counts fill in when the fetch returns
     try {
       const d = await api.get(`/campaigns/${c.id}`);
@@ -195,8 +203,13 @@ export default function Campaigns() {
             {campaigns.map((c) => (
               <tr key={c.id} className="clickable" onClick={() => openDetail(c)}>
                 <td>
-                  <strong>{c.name}</strong>
-                  <div className="muted small">{c.audio_name || 'No audio'}</div>
+                  <strong>{c.name}</strong>{' '}
+                  <span className={`badge ${c.channel === 'sms' ? 'info' : ''}`} style={{ fontSize: '.7em' }}>
+                    {c.channel === 'sms' ? '💬 SMS' : '📞 Voice'}
+                  </span>
+                  <div className="muted small">
+                    {c.channel === 'sms' ? 'SMS blast' : c.audio_name || 'No audio'}
+                  </div>
                 </td>
                 {isAdmin && (
                   <td className="muted small">
@@ -213,13 +226,16 @@ export default function Campaigns() {
                   )}
                 </td>
                 <td>
-                  <span className="muted small">up to</span> {c.cps} calls/sec
+                  <span className="muted small">up to</span> {c.cps}{' '}
+                  {c.channel === 'sms' ? 'msgs/sec' : 'calls/sec'}
                 </td>
                 <td>
                   {c.completed}/{c.run_total || c.total_contacts}
-                  <div className="muted small">{c.answered} answered</div>
+                  <div className="muted small">
+                    {c.channel === 'sms' ? `${c.sent || 0} sent` : `${c.answered} answered`}
+                  </div>
                 </td>
-                <td>{c.caller_number || '—'}</td>
+                <td>{c.channel === 'sms' ? '—' : c.caller_number || '—'}</td>
                 <td>
                   {c.schedule_type === 'scheduled'
                     ? new Date(c.scheduled_at).toLocaleString()
@@ -322,7 +338,7 @@ export default function Campaigns() {
                   <tbody>
                     {Object.entries(detail.counts).map(([k, n]) => (
                       <tr key={k}>
-                        <td>{countLabel(k, true)}</td>
+                        <td>{countLabel(k, true, detail.campaign.channel === 'sms')}</td>
                         <td>
                           <strong>{n}</strong>
                         </td>
@@ -366,11 +382,14 @@ export default function Campaigns() {
         </div>
       )}
 
-      {rerunFor && (
+      {rerunFor && (() => {
+        const rerunIsSms = rerunFor.channel === 'sms';
+        const noun = rerunIsSms ? 'recipients' : 'numbers';
+        return (
         <div className="modal-backdrop" onClick={() => setRerunFor(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Redial — {rerunFor.name}</h3>
-            <p className="muted small">Choose who to redial.</p>
+            <h3>{rerunIsSms ? 'Resend' : 'Redial'} — {rerunFor.name}</h3>
+            <p className="muted small">Choose who to {rerunIsSms ? 'resend to' : 'redial'}.</p>
             <label className="pick">
               <input
                 type="radio"
@@ -379,10 +398,10 @@ export default function Campaigns() {
                 onChange={() => setRerunScope('all')}
               />
               <span>
-                <strong>Redial everyone</strong>
+                <strong>{rerunIsSms ? 'Resend to everyone' : 'Redial everyone'}</strong>
                 <span className="muted small">
-                  Dial the whole list from scratch ({Number(rerunFor.total_contacts).toLocaleString()}{' '}
-                  numbers). Previous results are cleared.
+                  {rerunIsSms ? 'Send to' : 'Dial'} the whole list again ({Number(rerunFor.total_contacts).toLocaleString()}{' '}
+                  {noun}). Previous results are cleared.
                 </span>
               </span>
             </label>
@@ -394,9 +413,11 @@ export default function Campaigns() {
                 onChange={() => setRerunScope('unreached')}
               />
               <span>
-                <strong>Redial only those not reached</strong>
+                <strong>{rerunIsSms ? 'Resend only those not sent' : 'Redial only those not reached'}</strong>
                 <span className="muted small">
-                  Skip numbers already answered; redial the outcomes you pick below.
+                  {rerunIsSms
+                    ? 'Skip messages already sent; resend the outcomes you pick below.'
+                    : 'Skip numbers already answered; redial the outcomes you pick below.'}
                 </span>
               </span>
             </label>
@@ -405,7 +426,7 @@ export default function Campaigns() {
               <div className="rerun-breakdown">
                 {rerunFor.counts ? (
                   <>
-                    {RERUN_OUTCOMES.map(([k, lbl]) => {
+                    {rerunOutcomesFor(rerunFor.channel).map(([k, lbl]) => {
                       const cnt = Number(rerunFor.counts[k] || 0);
                       return (
                         <label key={k} className="pick" style={{ opacity: cnt ? 1 : 0.5 }}>
@@ -427,7 +448,7 @@ export default function Campaigns() {
                           .reduce((sum, k) => sum + Number(rerunFor.counts[k] || 0), 0)
                           .toLocaleString()}
                       </strong>{' '}
-                      numbers will be dialed.
+                      {noun} will be {rerunIsSms ? 'sent' : 'dialed'}.
                     </p>
                   </>
                 ) : (
@@ -449,12 +470,13 @@ export default function Campaigns() {
                     rerunStatuses.reduce((s, k) => s + Number(rerunFor.counts[k] || 0), 0) === 0)
                 }
               >
-                Start redial
+                {rerunIsSms ? 'Start resend' : 'Start redial'}
               </button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

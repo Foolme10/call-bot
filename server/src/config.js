@@ -27,6 +27,11 @@ const GLOBAL_MAX_CONCURRENT = Math.max(
 // primary guard. Set MAX_TOTAL_DIALS>0 in .env to also cap per number.
 const MAX_TOTAL_DIALS = Math.max(0, Number(process.env.MAX_TOTAL_DIALS || 0));
 
+// SMS gateway (nuavox) pacing ceilings. SMS sends are quick HTTP GETs, so the
+// only limits are how fast we fire requests (cps) and how many stay in flight.
+const SMS_MAX_CPS = Math.max(1, Number(process.env.SMS_MAX_CPS || 10));
+const SMS_MAX_CONCURRENT = Math.max(1, Number(process.env.SMS_MAX_CONCURRENT || 20));
+
 // Roughly how long an average call ties up a line (ring + message + hangup).
 // Used only to estimate how many lines a list needs to finish in TARGET_MINUTES.
 const AVG_CALL_SECONDS = Math.max(5, Number(process.env.AVG_CALL_SECONDS || 20));
@@ -58,6 +63,18 @@ function autoPace(totalContacts) {
   const throughput = Math.min(cps, maxConcurrent / AVG_CALL_SECONDS);
   const estMinutes = Math.max(1, Math.ceil(n / throughput / 60));
 
+  return { cps, maxConcurrent, targetMinutes: TARGET_MINUTES, estMinutes };
+}
+
+// Auto-pacing for SMS. No line-holding like voice — throughput is just the send
+// rate (cps), sized from the list to finish near TARGET_MINUTES and clamped to
+// the gateway ceiling. maxConcurrent bounds simultaneous in-flight HTTP sends.
+function smsPace(totalContacts) {
+  const n = Math.max(1, Number(totalContacts) || 1);
+  const targetSeconds = TARGET_MINUTES * 60;
+  const cps = Math.min(SMS_MAX_CPS, Math.max(1, Math.ceil(n / targetSeconds)));
+  const maxConcurrent = Math.min(SMS_MAX_CONCURRENT, Math.max(cps * 2, 5), n);
+  const estMinutes = Math.max(1, Math.ceil(n / cps / 60));
   return { cps, maxConcurrent, targetMinutes: TARGET_MINUTES, estMinutes };
 }
 
@@ -107,6 +124,21 @@ const config = {
     globalMaxConcurrent: GLOBAL_MAX_CONCURRENT,
   },
 
+  sms: {
+    // nuavox HTTP API. Endpoint takes ?action=send-sms&auth-key=..&to=..&content=..
+    apiUrl: process.env.SMS_API_URL || 'http://sms.nuavox.com/api',
+    authKey: process.env.SMS_AUTH_KEY || '', // blank = SMS not configured (sends fail with a clear error)
+    maxCps: SMS_MAX_CPS,
+    maxConcurrent: SMS_MAX_CONCURRENT,
+    // Trunk-wide cap on simultaneous in-flight sends across ALL SMS campaigns.
+    globalMaxConcurrent: Math.max(
+      SMS_MAX_CONCURRENT,
+      Number(process.env.SMS_GLOBAL_MAX_CONCURRENT || SMS_MAX_CONCURRENT)
+    ),
+    // Seconds before a single send HTTP request is aborted as a timeout.
+    requestTimeout: Math.max(1, Number(process.env.SMS_REQUEST_TIMEOUT || 30)),
+  },
+
   storage: {
     // Always resolve to an absolute path so a relative AUDIO_DIR/UPLOAD_TMP_DIR
     // can't make multer (which writes relative to cwd) and the path checks
@@ -117,6 +149,7 @@ const config = {
   },
 
   autoPace,
+  smsPace,
 };
 
 module.exports = config;

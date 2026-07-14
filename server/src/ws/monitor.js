@@ -3,6 +3,7 @@
 const { WebSocketServer } = require('ws');
 const url = require('url');
 const logger = require('../logger');
+const db = require('../db');
 const { verifyToken } = require('../middleware/auth');
 
 // Real-time fan-out for the monitoring tab.
@@ -42,7 +43,7 @@ function attach(server) {
   logger.info('WebSocket monitor attached at /ws/monitor');
 }
 
-function onMessage(ws, data) {
+async function onMessage(ws, data) {
   let msg;
   try {
     msg = JSON.parse(data.toString());
@@ -52,7 +53,22 @@ function onMessage(ws, data) {
   const state = clients.get(ws);
   if (!state) return;
   if (msg.type === 'subscribe' && msg.campaignId != null) {
-    state.campaigns.add(Number(msg.campaignId));
+    // Only let a client stream a campaign it owns (admins can watch any). The
+    // live feed carries recipient names + phone numbers, so this must match the
+    // same ownership rule the REST endpoints enforce.
+    const id = Number(msg.campaignId);
+    if (state.role === 'admin') {
+      state.campaigns.add(id);
+      return;
+    }
+    try {
+      const rows = await db.query('SELECT user_id FROM campaigns WHERE id = :id', { id });
+      if (rows[0] && Number(rows[0].user_id) === Number(state.userId) && clients.has(ws)) {
+        state.campaigns.add(id);
+      }
+    } catch (e) {
+      logger.warn(`Monitor subscribe ownership check failed: ${e.message}`);
+    }
   } else if (msg.type === 'unsubscribe' && msg.campaignId != null) {
     state.campaigns.delete(Number(msg.campaignId));
   }

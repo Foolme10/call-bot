@@ -9,21 +9,26 @@ const { ApiError, asyncHandler } = require('../http');
 const { requireAuth } = require('../middleware/auth');
 const { resolveTmpUpload } = require('../middleware/upload');
 const { extractContacts } = require('../services/fileParser');
-const dialer = require('../services/dialer');
+const { engineFor } = require('../services/campaignEngine');
 
 const router = express.Router();
 router.use(requireAuth);
 
 // Trunk capacity, so the UI can show the auto-pacing ceiling.
 router.get('/meta/pacing', (_req, res) => {
-  res.json({ maxConcurrent: config.calls.maxConcurrent, maxCps: config.calls.maxCps });
+  res.json({
+    maxConcurrent: config.calls.maxConcurrent,
+    maxCps: config.calls.maxCps,
+    sms: { maxCps: config.sms.maxCps, configured: !!config.sms.authKey },
+  });
 });
 
 // Preview the pace a list of this size would get (speed + estimated finish
 // time), so the New Campaign screen can show it before the campaign exists.
 router.get('/meta/pace', (req, res) => {
   const count = Math.max(0, parseInt(req.query.count, 10) || 0);
-  res.json(config.autoPace(count));
+  const pace = req.query.channel === 'sms' ? config.smsPace(count) : config.autoPace(count);
+  res.json(pace);
 });
 
 // Fetch a campaign the requester is allowed to touch. Admins (the 'support'
@@ -72,23 +77,25 @@ router.get(
       params
     );
     const rows = await db.query(
-      `SELECT c.id, c.name, c.status, c.intensity_level, c.cps, c.max_concurrent,
+      `SELECT c.id, c.name, c.channel, c.status, c.intensity_level, c.cps, c.max_concurrent,
               c.schedule_type, c.scheduled_at, c.total_contacts, c.created_at,
               c.started_at, c.completed_at, c.rerun_scope, c.redial_count,
               ci.label AS caller_label, ci.number AS caller_number, a.name AS audio_name,
               u.username AS owner,
               COALESCE(s.run_total, 0) AS run_total,
               COALESCE(s.answered, 0)  AS answered,
+              COALESCE(s.sent, 0)      AS sent,
               COALESCE(s.completed, 0) AS completed
          FROM campaigns c
          LEFT JOIN caller_ids ci ON ci.id = c.caller_id_id
          LEFT JOIN audio_files a ON a.id = c.audio_file_id
          LEFT JOIN users u ON u.id = c.user_id
          LEFT JOIN (
-              -- Cumulative across all runs so answered grows with each redial.
+              -- Cumulative across all runs so answered/sent grow with each redial.
               SELECT campaign_id,
                      COUNT(*) AS run_total,
                      SUM(status = 'answered') AS answered,
+                     SUM(status = 'sent') AS sent,
                      SUM(status NOT IN ('queued','dialing')) AS completed
                 FROM call_logs GROUP BY campaign_id
          ) s ON s.campaign_id = c.id
@@ -103,8 +110,10 @@ router.get(
 
 const createSchema = z.object({
   name: z.string().min(1).max(128),
+  channel: z.enum(['voice', 'sms']).default('voice'),
   callerIdId: z.coerce.number().int().positive().nullable().optional(),
-  audioFileId: z.coerce.number().int().positive(),
+  audioFileId: z.coerce.number().int().positive().optional(), // required for voice, validated below
+  messageTemplate: z.string().min(1).max(1600).optional(),    // required for sms, validated below
   scheduleType: z.enum(['now', 'scheduled']),
   scheduledAt: z.string().datetime().optional(),
   maxAttempts: z.coerce.number().int().min(1).max(5).optional(),
@@ -115,6 +124,7 @@ const createSchema = z.object({
     uploadId: z.string().min(1),
     nameColumn: z.string().optional(),
     numberColumn: z.string().min(1),
+    amountColumn: z.string().optional(), // feeds the SMS {amount} variable
   }),
 });
 
@@ -128,20 +138,29 @@ router.post(
       throw new ApiError(400, 'Invalid campaign data', parsed.error.flatten());
     }
     const d = parsed.data;
+    const isSms = d.channel === 'sms';
 
-    // Validate referenced audio (required) + caller ID (optional) belong to user.
-    const audio = await db.query(
-      "SELECT id FROM audio_files WHERE id = :id AND user_id = :uid AND status = 'ready'",
-      { id: d.audioFileId, uid: req.user.id }
-    );
-    if (!audio[0]) throw new ApiError(400, 'Audio file not found or not ready');
+    // Channel-specific requirements. Voice needs a ready audio file (+ optional
+    // caller ID); SMS needs message text and no audio/caller ID.
+    if (isSms) {
+      if (!d.messageTemplate || !d.messageTemplate.trim()) {
+        throw new ApiError(400, 'SMS campaigns need message text');
+      }
+    } else {
+      if (!d.audioFileId) throw new ApiError(400, 'Voice campaigns need an audio recording');
+      const audio = await db.query(
+        "SELECT id FROM audio_files WHERE id = :id AND user_id = :uid AND status = 'ready'",
+        { id: d.audioFileId, uid: req.user.id }
+      );
+      if (!audio[0]) throw new ApiError(400, 'Audio file not found or not ready');
 
-    if (d.callerIdId) {
-      const cid = await db.query('SELECT id FROM caller_ids WHERE id = :id AND user_id = :uid', {
-        id: d.callerIdId,
-        uid: req.user.id,
-      });
-      if (!cid[0]) throw new ApiError(400, 'Caller ID not found');
+      if (d.callerIdId) {
+        const cid = await db.query('SELECT id FROM caller_ids WHERE id = :id AND user_id = :uid', {
+          id: d.callerIdId,
+          uid: req.user.id,
+        });
+        if (!cid[0]) throw new ApiError(400, 'Caller ID not found');
+      }
     }
 
     let scheduledAtSql = null;
@@ -153,11 +172,13 @@ router.post(
     }
 
     // Read + normalize contacts before creating the campaign so a bad file fails fast.
+    // The amount column is only relevant to SMS (feeds the {amount} variable).
     const filePath = resolveTmpUpload(d.contacts.uploadId);
     const { contacts, valid, invalid, total } = extractContacts(
       filePath,
       d.contacts.nameColumn,
-      d.contacts.numberColumn
+      d.contacts.numberColumn,
+      isSms ? d.contacts.amountColumn : undefined
     );
     if (valid === 0) {
       throw new ApiError(400, 'No valid phone numbers found in the selected number column');
@@ -167,31 +188,35 @@ router.post(
     const retryDelayMin = d.retryDelayMin || 0;
     const retryOn = (d.retryOn && d.retryOn.length ? d.retryOn : DEFAULT_RETRY_ON).join(',');
 
-    // Auto-pace from the list size, capped to the trunk's capacity. intensity_level
+    // Auto-pace from the list size, capped to the channel's ceiling. intensity_level
     // is kept as 0 to mark "auto" (the column stays for history/back-compat).
-    const pace = config.autoPace(valid);
+    const pace = isSms ? config.smsPace(valid) : config.autoPace(valid);
 
     const initialStatus = d.scheduleType === 'scheduled' ? 'scheduled' : 'draft';
     const result = await db.execute(
       `INSERT INTO campaigns
-         (user_id, name, caller_id_id, audio_file_id, intensity_level, cps, max_concurrent,
+         (user_id, name, channel, caller_id_id, audio_file_id, message_template,
+          intensity_level, cps, max_concurrent,
           max_attempts, retry_delay_min, retry_on, amd_enabled,
           schedule_type, scheduled_at, status, total_contacts)
        VALUES
-         (:uid, :name, :callerId, :audio, 0, :cps, :max,
+         (:uid, :name, :channel, :callerId, :audio, :template,
+          0, :cps, :max,
           :maxAttempts, :retryDelay, :retryOn, :amd,
           :stype, :sched, :status, :total)`,
       {
         uid: req.user.id,
         name: d.name,
-        callerId: d.callerIdId || null,
-        audio: d.audioFileId,
+        channel: d.channel,
+        callerId: isSms ? null : d.callerIdId || null,
+        audio: isSms ? null : d.audioFileId,
+        template: isSms ? d.messageTemplate : null,
         cps: pace.cps,
         max: pace.maxConcurrent,
         maxAttempts,
         retryDelay: retryDelayMin,
         retryOn,
-        amd: d.amdEnabled ? 1 : 0,
+        amd: isSms ? 0 : d.amdEnabled ? 1 : 0,
         stype: d.scheduleType,
         sched: scheduledAtSql,
         status: initialStatus,
@@ -207,22 +232,23 @@ router.post(
       const tuples = [];
       const params = { cid: campaignId };
       chunk.forEach((c, j) => {
-        tuples.push(`(:cid, :name${j}, :phone${j})`);
+        tuples.push(`(:cid, :name${j}, :phone${j}, :amount${j})`);
         params[`name${j}`] = c.name;
         params[`phone${j}`] = c.phone;
+        params[`amount${j}`] = c.amount;
       });
       await db.query(
-        `INSERT INTO contacts (campaign_id, name, phone) VALUES ${tuples.join(',')}`,
+        `INSERT INTO contacts (campaign_id, name, phone, amount) VALUES ${tuples.join(',')}`,
         params
       );
     }
     fs.promises.unlink(filePath).catch(() => {});
 
-    // Run-now: kick off the dialer immediately.
+    // Run-now: kick off the right engine (dialer for voice, sender for SMS).
     let warning = null;
     if (d.scheduleType === 'now') {
       try {
-        await dialer.startCampaign(campaignId);
+        await engineFor(d.channel).startCampaign(campaignId);
       } catch (e) {
         warning = `Campaign created but could not start: ${e.message}`;
       }
@@ -289,6 +315,7 @@ router.get(
     counts.forEach((r) => (byStatus[r.status] = Number(r.n)));
     res.json({
       status: campaign.status,
+      channel: campaign.channel || 'voice',
       counts: byStatus,
       active,
       rerunScope: campaign.rerun_scope || null,
@@ -307,7 +334,7 @@ router.post(
     if (['running', 'completed'].includes(campaign.status)) {
       throw new ApiError(409, `Campaign is already ${campaign.status}`);
     }
-    await dialer.startCampaign(campaign.id);
+    await engineFor(campaign.channel).startCampaign(campaign.id);
     res.json({ ok: true, status: 'running' });
   })
 );
@@ -317,7 +344,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const campaign = await getOwnedCampaign(req.params.id, req.user);
     if (campaign.status !== 'running') throw new ApiError(409, 'Campaign is not running');
-    await dialer.pauseCampaign(campaign.id);
+    await engineFor(campaign.channel).pauseCampaign(campaign.id);
     res.json({ ok: true, status: 'paused' });
   })
 );
@@ -326,7 +353,7 @@ router.post(
   '/:id/stop',
   asyncHandler(async (req, res) => {
     const campaign = await getOwnedCampaign(req.params.id, req.user);
-    await dialer.stopCampaign(campaign.id);
+    await engineFor(campaign.channel).stopCampaign(campaign.id);
     res.json({ ok: true, status: 'stopped' });
   })
 );
@@ -353,7 +380,7 @@ router.post(
     const scope = req.body && req.body.scope === 'unreached' ? 'unreached' : 'all';
     const statuses = Array.isArray(req.body && req.body.statuses) ? req.body.statuses : null;
 
-    await dialer.rerunCampaign(campaign.id, scope, statuses);
+    await engineFor(campaign.channel).rerunCampaign(campaign.id, scope, statuses);
     await db.execute('UPDATE campaigns SET redial_count = redial_count + 1 WHERE id = :id', {
       id: campaign.id,
     });
@@ -369,6 +396,7 @@ const editSchema = z.object({
   name: z.string().min(1).max(128).optional(),
   callerIdId: z.coerce.number().int().positive().nullable().optional(),
   audioFileId: z.coerce.number().int().positive().optional(),
+  messageTemplate: z.string().min(1).max(1600).optional(),
   maxAttempts: z.coerce.number().int().min(1).max(5).optional(),
   retryDelayMin: z.coerce.number().int().min(0).max(1440).optional(),
   retryOn: z.array(z.enum(['busy', 'no_answer', 'congestion', 'failed'])).optional(),
@@ -415,6 +443,10 @@ router.patch(
     if (d.audioFileId !== undefined) {
       sets.push('audio_file_id = :audio');
       params.audio = d.audioFileId;
+    }
+    if (d.messageTemplate !== undefined) {
+      sets.push('message_template = :template');
+      params.template = d.messageTemplate;
     }
     if (d.maxAttempts !== undefined) {
       sets.push('max_attempts = :maxAttempts');
@@ -472,7 +504,7 @@ router.patch(
         "UPDATE campaigns SET schedule_type = 'now', scheduled_at = NULL WHERE id = :id",
         { id: campaign.id }
       );
-      await dialer.startCampaign(campaign.id);
+      await engineFor(campaign.channel).startCampaign(campaign.id);
       return res.json({ ok: true, status: 'running' });
     }
     if (!d.scheduledAt) throw new ApiError(400, 'scheduledAt is required');
