@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, fetchMediaUrl } from '../api.js';
 
 const guess = (cols, re) => cols.find((c) => re.test(c)) || '';
@@ -43,7 +43,11 @@ function smsSegments(text) {
 export default function NewCampaign() {
   const navigate = useNavigate();
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
   const editMode = Boolean(id); // /campaigns/:id/edit reuses this form to edit
+  // Opened via the "Manual blast" button (/campaigns/new?mode=manual): start on
+  // the typed-numbers entry instead of file upload.
+  const manualMode = !editMode && searchParams.get('mode') === 'manual';
   const [readOnly, setReadOnly] = useState(false); // live campaign: view settings, no edits
   const [campaignStatus, setCampaignStatus] = useState('');
   const [channel, setChannel] = useState('voice'); // 'voice' | 'sms' — fixed once created
@@ -70,7 +74,7 @@ export default function NewCampaign() {
     setRetryOn((prev) => (prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]));
 
   // Contact list state. `contactSource` toggles the file upload vs the typed box.
-  const [contactSource, setContactSource] = useState('upload'); // 'upload' | 'manual'
+  const [contactSource, setContactSource] = useState(manualMode ? 'manual' : 'upload'); // 'upload' | 'manual'
   const [manualText, setManualText] = useState('');
   const [preview, setPreview] = useState(null); // { uploadId, columns, sample, totalRows }
   const [nameColumn, setNameColumn] = useState('');
@@ -364,6 +368,8 @@ export default function NewCampaign() {
             ? readOnly
               ? 'Campaign settings (read-only)'
               : 'Campaign settings'
+            : manualMode
+            ? '⚡ Manual blast'
             : 'New campaign'}
         </h2>
       </div>

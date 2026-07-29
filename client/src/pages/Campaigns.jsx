@@ -152,9 +152,14 @@ export default function Campaigns() {
     <div>
       <div className="page-head">
         <h2>Campaigns</h2>
-        <Link className="btn primary" to="/campaigns/new">
-          + New campaign
-        </Link>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Link className="btn" to="/campaigns/new?mode=manual">
+            ⚡ Manual blast
+          </Link>
+          <Link className="btn primary" to="/campaigns/new">
+            + New campaign
+          </Link>
+        </div>
       </div>
 
       <div className="filters">
