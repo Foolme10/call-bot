@@ -54,6 +54,22 @@ CREATE TABLE IF NOT EXISTS audio_files (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------------
+-- Saved SMS message templates (per user). Reused in the SMS campaign composer.
+-- Body may contain {name}/{amount} placeholders, filled per recipient at send.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS sms_templates (
+  id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id    BIGINT UNSIGNED NOT NULL,
+  name       VARCHAR(128) NOT NULL,
+  body       TEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_sms_templates_user (user_id),
+  CONSTRAINT fk_sms_templates_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
 -- Campaigns. cps + max_concurrent are snapshotted from the chosen intensity
 -- level so later config changes don't alter an in-flight campaign.
 -- ---------------------------------------------------------------------------

@@ -85,4 +85,30 @@ function extractContacts(filePath, nameColumn, numberColumn, amountColumn) {
   return { contacts, total: rows.length, valid: contacts.length, invalid };
 }
 
-module.exports = { readTable, preview, extractContacts };
+// Parse a typed/pasted contact list (no file). One entry per line; each line is
+// either just a number, or "number, name, amount" (comma/tab/semicolon
+// separated) so SMS {name}/{amount} still work from manual input. Normalizes +
+// drops invalid numbers. Returns the same shape as extractContacts.
+function parseManual(text) {
+  const lines = String(text || '').split(/\r?\n/);
+  const contacts = [];
+  let total = 0;
+  let invalid = 0;
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue; // ignore blank lines entirely (not counted)
+    total += 1;
+    const parts = line.split(/[,\t;]/).map((s) => s.trim());
+    const phone = normalizePhone(parts[0]);
+    if (!isValidPhone(phone)) {
+      invalid += 1;
+      continue;
+    }
+    const name = parts[1] ? parts[1].slice(0, 128) : null;
+    const amount = parts[2] ? parts[2].slice(0, 64) : null;
+    contacts.push({ name: name || null, phone, amount: amount || null });
+  }
+  return { contacts, total, valid: contacts.length, invalid };
+}
+
+module.exports = { readTable, preview, extractContacts, parseManual };

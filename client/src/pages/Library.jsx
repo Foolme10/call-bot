@@ -4,6 +4,7 @@ import { api, fetchMediaUrl } from '../api.js';
 export default function Library() {
   const [audio, setAudio] = useState([]);
   const [callerIds, setCallerIds] = useState([]);
+  const [templates, setTemplates] = useState([]);
   const [error, setError] = useState('');
   const [players, setPlayers] = useState({}); // audioId -> object URL for preview
 
@@ -16,11 +17,21 @@ export default function Library() {
   const [label, setLabel] = useState('');
   const [number, setNumber] = useState('');
 
+  // SMS template form (also reused to edit an existing one)
+  const [tplName, setTplName] = useState('');
+  const [tplBody, setTplBody] = useState('');
+  const [editingTpl, setEditingTpl] = useState(null); // id being edited, or null
+
   async function load() {
     try {
-      const [a, c] = await Promise.all([api.get('/audio'), api.get('/caller-ids')]);
+      const [a, c, t] = await Promise.all([
+        api.get('/audio'),
+        api.get('/caller-ids'),
+        api.get('/sms-templates'),
+      ]);
       setAudio(a.audio);
       setCallerIds(c.callerIds);
+      setTemplates(t.templates || []);
     } catch (e) {
       setError(e.message);
     }
@@ -82,10 +93,45 @@ export default function Library() {
     await api.del(`/caller-ids/${id}`).then(load).catch((e) => alert(e.message));
   }
 
+  async function saveTemplate(e) {
+    e.preventDefault();
+    setError('');
+    if (!tplName.trim() || !tplBody.trim()) return setError('A template needs a name and message text.');
+    try {
+      if (editingTpl) {
+        await api.patch(`/sms-templates/${editingTpl}`, { name: tplName, body: tplBody });
+      } else {
+        await api.post('/sms-templates', { name: tplName, body: tplBody });
+      }
+      setTplName('');
+      setTplBody('');
+      setEditingTpl(null);
+      load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+  function editTemplate(t) {
+    setEditingTpl(t.id);
+    setTplName(t.name);
+    setTplBody(t.body);
+    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+  }
+  function cancelEditTemplate() {
+    setEditingTpl(null);
+    setTplName('');
+    setTplBody('');
+  }
+  async function delTemplate(id) {
+    if (!confirm('Delete this SMS template?')) return;
+    if (editingTpl === id) cancelEditTemplate();
+    await api.del(`/sms-templates/${id}`).then(load).catch((e) => alert(e.message));
+  }
+
   return (
     <div>
       <div className="page-head">
-        <h2>Audio & Caller IDs</h2>
+        <h2>Library — Audio, Caller IDs & SMS Templates</h2>
       </div>
       {error && <div className="alert error">{error}</div>}
 
@@ -204,6 +250,79 @@ export default function Library() {
           </div>
         </section>
       </div>
+
+      <section className="card">
+        <h3>SMS message templates</h3>
+        <p className="muted small">
+          Reusable SMS messages. Use <code>{'{name}'}</code> / <code>{'{amount}'}</code> to personalize
+          per recipient. Saved templates appear in the “Load a saved template” dropdown when you
+          compose an SMS campaign.
+        </p>
+        <form onSubmit={saveTemplate} style={{ marginBottom: 16 }}>
+          <label>Template name</label>
+          <input
+            placeholder="e.g. Payment reminder"
+            value={tplName}
+            onChange={(e) => setTplName(e.target.value)}
+          />
+          <label style={{ marginTop: 8 }}>Message</label>
+          <textarea
+            rows={3}
+            maxLength={1600}
+            placeholder="Hi {name}, your outstanding amount is RM{amount}. Please settle by Friday."
+            value={tplBody}
+            onChange={(e) => setTplBody(e.target.value)}
+          />
+          <div className="form-actions" style={{ marginTop: 10 }}>
+            {editingTpl && (
+              <button type="button" className="btn ghost" onClick={cancelEditTemplate}>
+                Cancel
+              </button>
+            )}
+            <button className="btn primary">
+              {editingTpl ? 'Save changes' : 'Add template'}
+            </button>
+          </div>
+        </form>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Message</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {templates.map((t) => (
+                <tr key={t.id}>
+                  <td><strong>{t.name}</strong></td>
+                  <td className="muted small" style={{ whiteSpace: 'pre-wrap', maxWidth: 460 }}>
+                    {t.body}
+                  </td>
+                  <td className="actions-cell">
+                    <div className="actions">
+                      <button className="btn small" onClick={() => editTemplate(t)}>
+                        Edit
+                      </button>
+                      <button className="btn small ghost" onClick={() => delTemplate(t.id)}>
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {templates.length === 0 && (
+                <tr>
+                  <td colSpan="3" className="muted">
+                    No templates yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 }

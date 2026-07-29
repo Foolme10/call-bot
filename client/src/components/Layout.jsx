@@ -3,7 +3,7 @@ import { useAuth } from '../auth.jsx';
 
 const tabs = [
   { to: '/campaigns', label: 'Campaigns' },
-  { to: '/library', label: 'Audio & Caller IDs' },
+  { to: '/library', label: 'Library' },
   { to: '/reports', label: 'Reports' },
   { to: '/monitor', label: 'Live Monitor' },
 ];

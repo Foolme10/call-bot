@@ -69,13 +69,18 @@ export default function NewCampaign() {
   const toggleRetryOn = (v) =>
     setRetryOn((prev) => (prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]));
 
-  // Contact upload state
+  // Contact list state. `contactSource` toggles the file upload vs the typed box.
+  const [contactSource, setContactSource] = useState('upload'); // 'upload' | 'manual'
+  const [manualText, setManualText] = useState('');
   const [preview, setPreview] = useState(null); // { uploadId, columns, sample, totalRows }
   const [nameColumn, setNameColumn] = useState('');
   const [numberColumn, setNumberColumn] = useState('');
   const [amountColumn, setAmountColumn] = useState('');
   const [uploading, setUploading] = useState(false);
   const [estimate, setEstimate] = useState(null); // auto-pace preview for this list size
+
+  // Saved SMS templates (load into the composer).
+  const [templates, setTemplates] = useState([]);
 
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -85,14 +90,19 @@ export default function NewCampaign() {
       api.get('/caller-ids'),
       api.get('/audio'),
       api.get('/campaigns/meta/pacing'),
+      api.get('/sms-templates').catch(() => ({ templates: [] })),
     ])
-      .then(([c, a, p]) => {
+      .then(([c, a, p, t]) => {
         setCallerIds(c.callerIds);
         setAudios(a.audio.filter((x) => x.status === 'ready'));
         setPacing(p);
+        setTemplates(t.templates || []);
       })
       .catch((e) => setError(e.message));
   }, []);
+
+  // How many numbers the typed box holds (non-blank lines) — for the pace preview.
+  const manualCount = manualText.split(/\r?\n/).filter((l) => l.trim()).length;
 
   // Edit mode: load the campaign and prefill the form. The contact list can't
   // be changed here (create a new campaign for a different list).
@@ -157,13 +167,36 @@ export default function NewCampaign() {
 
   // Re-fetch the pace estimate when the channel changes (voice vs SMS pace differ).
   useEffect(() => {
-    const count = preview ? preview.totalRows : editMode ? existingContacts : null;
-    if (count == null) return;
+    const count =
+      contactSource === 'manual'
+        ? manualCount
+        : preview
+        ? preview.totalRows
+        : editMode
+        ? existingContacts
+        : null;
+    if (!count) return;
     api
       .get(`/campaigns/meta/pace?count=${count}&channel=${channel}`)
       .then(setEstimate)
       .catch(() => {});
   }, [channel]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Debounced pace preview for the typed box as numbers are added/removed.
+  useEffect(() => {
+    if (editMode || contactSource !== 'manual') return undefined;
+    if (manualCount === 0) {
+      setEstimate(null);
+      return undefined;
+    }
+    const t = setTimeout(() => {
+      api
+        .get(`/campaigns/meta/pace?count=${manualCount}&channel=${channel}`)
+        .then(setEstimate)
+        .catch(() => {});
+    }, 300);
+    return () => clearTimeout(t);
+  }, [manualCount, contactSource, channel, editMode]);
 
   async function onFile(e) {
     const file = e.target.files[0];
@@ -211,6 +244,24 @@ export default function NewCampaign() {
     });
   }
 
+  // Saved SMS templates: load one into the composer, or save the current message.
+  function loadTemplate(id) {
+    const t = templates.find((x) => String(x.id) === String(id));
+    if (t) setMessageTemplate(t.body);
+  }
+  async function saveAsTemplate() {
+    if (!messageTemplate.trim()) return setError('Write a message first, then save it as a template.');
+    const tname = prompt('Save this message as a template.\nTemplate name:');
+    if (!tname || !tname.trim()) return;
+    try {
+      await api.post('/sms-templates', { name: tname.trim(), body: messageTemplate });
+      const d = await api.get('/sms-templates');
+      setTemplates(d.templates || []);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
   async function onSubmit(e) {
     e.preventDefault();
     setError('');
@@ -223,8 +274,12 @@ export default function NewCampaign() {
     if (scheduleType === 'scheduled' && !scheduledAt)
       return setError('Pick a date and time for the scheduled campaign.');
     if (!editMode) {
-      if (!preview) return setError('Upload a contact list first.');
-      if (!numberColumn) return setError('Choose which column holds the phone number.');
+      if (contactSource === 'manual') {
+        if (!manualText.trim()) return setError('Type at least one phone number.');
+      } else {
+        if (!preview) return setError('Upload a contact list first.');
+        if (!numberColumn) return setError('Choose which column holds the phone number.');
+      }
     }
 
     // For SMS, only "failed" is a meaningful retry trigger (transient gateway
@@ -264,12 +319,15 @@ export default function NewCampaign() {
         ...(isSms
           ? { messageTemplate }
           : { callerIdId: callerIdId ? Number(callerIdId) : null, audioFileId: Number(audioFileId) }),
-        contacts: {
-          uploadId: preview.uploadId,
-          nameColumn,
-          numberColumn,
-          ...(isSms && amountColumn ? { amountColumn } : {}),
-        },
+        contacts:
+          contactSource === 'manual'
+            ? { manualText }
+            : {
+                uploadId: preview.uploadId,
+                nameColumn,
+                numberColumn,
+                ...(isSms && amountColumn ? { amountColumn } : {}),
+              },
       };
       const d = await api.post('/campaigns', body);
       const s = d.contactsSummary;
@@ -365,6 +423,26 @@ export default function NewCampaign() {
           </p>
         ) : (
         <>
+        <div className="radio-row" style={{ marginBottom: 12 }}>
+          <label>
+            <input
+              type="radio"
+              checked={contactSource === 'upload'}
+              onChange={() => setContactSource('upload')}
+            />{' '}
+            Upload a file
+          </label>
+          <label>
+            <input
+              type="radio"
+              checked={contactSource === 'manual'}
+              onChange={() => setContactSource('manual')}
+            />{' '}
+            Type the numbers
+          </label>
+        </div>
+        {contactSource === 'upload' ? (
+        <>
         <p className="muted small">
           Upload a CSV or Excel file. Extra columns are fine — you’ll pick which ones to use.
         </p>
@@ -446,6 +524,29 @@ export default function NewCampaign() {
           </div>
         )}
         </>
+        ) : (
+        <>
+          <p className="muted small">
+            One entry per line — just a number, or{' '}
+            <code>number, name{isSms ? ', amount' : ''}</code> to personalize each recipient.
+          </p>
+          <textarea
+            value={manualText}
+            onChange={(e) => setManualText(e.target.value)}
+            rows={6}
+            placeholder={
+              isSms
+                ? '0123456789, Alex, 250\n0122223333, Bee, 1000'
+                : '0123456789, Alex\n0122223333, Bee'
+            }
+          />
+          <div className="muted small" style={{ marginTop: 6 }}>
+            {manualCount.toLocaleString()} {isSms ? 'recipient' : 'number'}
+            {manualCount === 1 ? '' : 's'} entered
+          </div>
+        </>
+        )}
+        </>
         )}
       </section>
 
@@ -457,14 +558,38 @@ export default function NewCampaign() {
             contact list per recipient.
           </p>
           {!readOnly && (
-            <div className="radio-row" style={{ marginBottom: 8 }}>
-              <button type="button" className="btn small ghost" onClick={() => insertVar('{name}')}>
-                + Insert {'{name}'}
-              </button>
-              <button type="button" className="btn small ghost" onClick={() => insertVar('{amount}')}>
-                + Insert {'{amount}'}
-              </button>
-            </div>
+            <>
+              <div className="radio-row" style={{ marginBottom: 8, flexWrap: 'wrap' }}>
+                <button type="button" className="btn small ghost" onClick={() => insertVar('{name}')}>
+                  + Insert {'{name}'}
+                </button>
+                <button type="button" className="btn small ghost" onClick={() => insertVar('{amount}')}>
+                  + Insert {'{amount}'}
+                </button>
+                <button type="button" className="btn small" onClick={saveAsTemplate}>
+                  💾 Save as template
+                </button>
+              </div>
+              {templates.length > 0 && (
+                <div style={{ marginBottom: 8 }}>
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      loadTemplate(e.target.value);
+                      e.currentTarget.value = '';
+                    }}
+                    style={{ maxWidth: 340 }}
+                  >
+                    <option value="">Load a saved template…</option>
+                    {templates.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </>
           )}
           {readOnly ? (
             <textarea value={meta.messageTemplate || ''} readOnly rows={4} />
@@ -511,7 +636,7 @@ export default function NewCampaign() {
                     ))}
                   </select>
                   {audios.length === 0 && (
-                    <p className="muted small">No recordings yet — add one on the “Audio & Caller IDs” tab.</p>
+                    <p className="muted small">No recordings yet — add one on the “Library” tab.</p>
                   )}
                 </>
               )}
@@ -559,11 +684,20 @@ export default function NewCampaign() {
             : ''}
           . Nothing to configure.
         </p>
-        {estimate && (preview || (editMode && existingContacts != null)) && (
+        {estimate &&
+          (contactSource === 'manual'
+            ? manualCount > 0
+            : preview || (editMode && existingContacts != null)) && (
           <div className="pace-preview">
             <div>
               <strong>
-                {Number(preview ? preview.totalRows : existingContacts).toLocaleString()}
+                {Number(
+                  contactSource === 'manual'
+                    ? manualCount
+                    : preview
+                    ? preview.totalRows
+                    : existingContacts
+                ).toLocaleString()}
               </strong>{' '}
               {isSms ? 'recipients' : 'numbers'} → up to <strong>{estimate.cps}</strong>{' '}
               {isSms ? 'messages/sec' : 'calls/sec'}

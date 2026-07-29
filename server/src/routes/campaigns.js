@@ -8,7 +8,7 @@ const config = require('../config');
 const { ApiError, asyncHandler } = require('../http');
 const { requireAuth } = require('../middleware/auth');
 const { resolveTmpUpload } = require('../middleware/upload');
-const { extractContacts } = require('../services/fileParser');
+const { extractContacts, parseManual } = require('../services/fileParser');
 const { engineFor } = require('../services/campaignEngine');
 
 const router = express.Router();
@@ -121,10 +121,13 @@ const createSchema = z.object({
   retryOn: z.array(z.enum(['busy', 'no_answer', 'congestion', 'failed'])).optional(),
   amdEnabled: z.boolean().optional(),
   contacts: z.object({
-    uploadId: z.string().min(1),
+    // File upload path: an uploadId + column mapping.
+    uploadId: z.string().optional(),
     nameColumn: z.string().optional(),
-    numberColumn: z.string().min(1),
+    numberColumn: z.string().optional(),
     amountColumn: z.string().optional(), // feeds the SMS {amount} variable
+    // Manual path: typed/pasted list (one entry per line, "number[,name,amount]").
+    manualText: z.string().optional(),
   }),
 });
 
@@ -171,17 +174,34 @@ router.post(
       scheduledAtSql = when.toISOString().slice(0, 19).replace('T', ' '); // UTC DATETIME
     }
 
-    // Read + normalize contacts before creating the campaign so a bad file fails fast.
-    // The amount column is only relevant to SMS (feeds the {amount} variable).
-    const filePath = resolveTmpUpload(d.contacts.uploadId);
-    const { contacts, valid, invalid, total } = extractContacts(
-      filePath,
-      d.contacts.nameColumn,
-      d.contacts.numberColumn,
-      isSms ? d.contacts.amountColumn : undefined
-    );
-    if (valid === 0) {
-      throw new ApiError(400, 'No valid phone numbers found in the selected number column');
+    // Read + normalize contacts before creating the campaign so a bad list fails
+    // fast. Two sources: a typed/pasted list (manualText) or an uploaded file +
+    // column mapping. The amount column is only relevant to SMS ({amount}).
+    let filePath = null;
+    let contacts, valid, invalid, total;
+    const manual = d.contacts.manualText;
+    if (manual != null && manual.trim() !== '') {
+      ({ contacts, valid, invalid, total } = parseManual(manual));
+      if (valid === 0) {
+        throw new ApiError(400, 'No valid phone numbers found in the typed list');
+      }
+    } else {
+      if (!d.contacts.uploadId) {
+        throw new ApiError(400, 'Provide a contact list — upload a file or type numbers');
+      }
+      if (!d.contacts.numberColumn) {
+        throw new ApiError(400, 'Choose which column holds the phone number');
+      }
+      filePath = resolveTmpUpload(d.contacts.uploadId);
+      ({ contacts, valid, invalid, total } = extractContacts(
+        filePath,
+        d.contacts.nameColumn,
+        d.contacts.numberColumn,
+        isSms ? d.contacts.amountColumn : undefined
+      ));
+      if (valid === 0) {
+        throw new ApiError(400, 'No valid phone numbers found in the selected number column');
+      }
     }
 
     const maxAttempts = d.maxAttempts || 1;
@@ -242,7 +262,7 @@ router.post(
         params
       );
     }
-    fs.promises.unlink(filePath).catch(() => {});
+    if (filePath) fs.promises.unlink(filePath).catch(() => {});
 
     // Run-now: kick off the right engine (dialer for voice, sender for SMS).
     let warning = null;

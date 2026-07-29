@@ -16,6 +16,7 @@ const audioRoutes = require('./routes/audio');
 const contactRoutes = require('./routes/contacts');
 const campaignRoutes = require('./routes/campaigns');
 const reportRoutes = require('./routes/reports');
+const smsTemplateRoutes = require('./routes/smsTemplates');
 
 const dialer = require('./services/dialer');
 const smsSender = require('./services/smsSender');
@@ -43,6 +44,7 @@ app.use('/api/audio', audioRoutes);
 app.use('/api/contacts', contactRoutes);
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/sms-templates', smsTemplateRoutes);
 
 // 404 for unmatched API routes.
 app.use('/api', (_req, _res, next) => next(new ApiError(404, 'Not found')));
