@@ -105,7 +105,9 @@ function parseManual(text) {
       continue;
     }
     const name = parts[1] ? parts[1].slice(0, 128) : null;
-    const amount = parts[2] ? parts[2].slice(0, 64) : null;
+    // Everything after the name is the amount, rejoined so a value that itself
+    // contains a comma (e.g. "1,000") isn't truncated.
+    const amount = parts.length > 2 ? parts.slice(2).join(',').slice(0, 64) : null;
     contacts.push({ name: name || null, phone, amount: amount || null });
   }
   return { contacts, total, valid: contacts.length, invalid };
