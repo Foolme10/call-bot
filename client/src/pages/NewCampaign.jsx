@@ -343,8 +343,23 @@ export default function NewCampaign() {
         msg += `\nSending at up to ${d.pace.cps} ${verb}/sec (~${d.pace.estMinutes} min to finish).`;
       }
       if (d.warning) msg += `\n\n${d.warning}`;
+
+      const newId = d.campaign && d.campaign.id;
+      if (scheduleType === 'now') {
+        // A manual blast that actually started goes straight to the Monitor
+        // (auto-selected) and pops an outcome summary when it finishes — no
+        // start-time alert to dismiss. If it couldn't start (d.warning), fall
+        // through so the user sees why.
+        if (contactSource === 'manual' && newId && !d.warning) {
+          navigate('/monitor', { state: { watch: newId, manual: true } });
+          return;
+        }
+        alert(msg);
+        navigate('/monitor', newId ? { state: { watch: newId } } : undefined);
+        return;
+      }
       alert(msg);
-      navigate(scheduleType === 'now' ? '/monitor' : '/campaigns');
+      navigate('/campaigns');
     } catch (err) {
       setError(err.message);
     } finally {

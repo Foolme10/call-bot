@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { api, getToken } from '../api.js';
 
 // Plain-English meaning of each outcome — surfaced as tooltips so operators
@@ -33,8 +34,14 @@ function mmss(ms) {
 }
 
 export default function Monitor() {
+  const location = useLocation();
+  // A manual blast navigates here with { watch: id, manual: true } so we can
+  // auto-select it and pop an outcome summary the moment it finishes.
+  const manualWatch = location.state?.manual ? String(location.state.watch) : null;
   const [campaigns, setCampaigns] = useState([]);
   const [campaignId, setCampaignId] = useState('');
+  const [completed, setCompleted] = useState(null); // { status, counts, channel } for the done popup
+  const completionShownRef = useRef(false);
   const [counts, setCounts] = useState({});
   const [channel, setChannel] = useState('voice');
   const [campaignStatus, setCampaignStatus] = useState('');
@@ -64,6 +71,13 @@ export default function Monitor() {
     return () => clearInterval(t);
   }, []);
 
+  // Arrived from a just-launched blast: auto-select it so the user doesn't have
+  // to pick it from the dropdown.
+  useEffect(() => {
+    if (location.state?.watch) setCampaignId(String(location.state.watch));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Ticking clock so "on the line" durations update every second.
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -82,6 +96,16 @@ export default function Monitor() {
         setCounts(d.counts);
         setChannel(d.channel || 'voice');
         setCampaignStatus(d.status);
+        // Manual blast we launched here just finished → show the outcome popup once.
+        if (
+          manualWatch &&
+          String(campaignId) === manualWatch &&
+          (d.status === 'completed' || d.status === 'stopped') &&
+          !completionShownRef.current
+        ) {
+          completionShownRef.current = true;
+          setCompleted({ status: d.status, counts: d.counts || {}, channel: d.channel || 'voice' });
+        }
         setRerunScope(d.rerunScope || null);
         setRetry({ maxAttempts: d.maxAttempts || 1, retryOn: d.retryOn || '' });
         setTotalContacts(d.totalContacts || 0);
@@ -388,6 +412,58 @@ export default function Monitor() {
           </section>
         </>
       )}
+
+      {completed && (() => {
+        const cc = completed.counts || {};
+        const cn = (k) => Number(cc[k] || 0);
+        const smsDone = completed.channel === 'sms';
+        const total = Object.values(cc).reduce((a, b) => a + Number(b), 0);
+        const stopped = completed.status === 'stopped';
+        const stats = smsDone
+          ? [
+              ['Sent', cn('sent'), 'ok-text'],
+              ['Failed', cn('failed'), ''],
+              ...(cn('queued') > 0 ? [['Not sent', cn('queued'), '']] : []),
+            ]
+          : [
+              ['Answered', cn('answered'), 'ok-text'],
+              ['No answer', cn('no_answer'), ''],
+              ['Busy', cn('busy'), ''],
+              ['Failed', cn('failed') + cn('congestion'), ''],
+            ];
+        return (
+          <div className="modal-backdrop" onClick={() => setCompleted(null)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <h3>{stopped ? '⏹ Manual blast stopped' : '✅ Manual blast complete'}</h3>
+              <p className="muted small">
+                {smsDone ? 'SMS' : 'Voice'} blast · {total.toLocaleString()}{' '}
+                {smsDone ? (total === 1 ? 'recipient' : 'recipients') : total === 1 ? 'number' : 'numbers'}
+              </p>
+              <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', margin: '10px 0 4px' }}>
+                {stats.map(([label, val, cls]) => (
+                  <div key={label}>
+                    <div className={`num ${cls}`} style={{ fontSize: 26 }}>
+                      {val}
+                    </div>
+                    <div className="muted small">{label}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="form-actions" style={{ marginTop: 12 }}>
+                <Link className="btn" to="/campaigns/new?mode=manual">
+                  Send another
+                </Link>
+                <Link className="btn" to="/reports">
+                  Open report
+                </Link>
+                <button className="btn primary" onClick={() => setCompleted(null)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
