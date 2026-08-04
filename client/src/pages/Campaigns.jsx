@@ -63,6 +63,14 @@ export default function Campaigns() {
   const [rerunStatuses, setRerunStatuses] = useState(RERUN_DEFAULT); // chosen outcomes for 'unreached'
   const [isAdmin, setIsAdmin] = useState(false); // support super-user: sees all users' campaigns
   const [filter, setFilter] = useState('all'); // all | active | scheduled | completed
+  // Live edit (change caller ID / recording / message on a running or paused campaign)
+  const [liveEditFor, setLiveEditFor] = useState(null);
+  const [liveCallerId, setLiveCallerId] = useState('');
+  const [liveAudioId, setLiveAudioId] = useState('');
+  const [liveMessage, setLiveMessage] = useState('');
+  const [callerIds, setCallerIds] = useState([]);
+  const [audios, setAudios] = useState([]);
+  const [liveSaving, setLiveSaving] = useState(false);
 
   async function load(p = page) {
     try {
@@ -136,6 +144,48 @@ export default function Campaigns() {
     setRerunStatuses((prev) =>
       prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
     );
+  }
+
+  // Change caller ID / recording (voice) or message (SMS) on a live campaign.
+  async function openLiveEdit(c) {
+    setLiveSaving(false);
+    setLiveEditFor(c); // show immediately; selects fill in when the fetches return
+    try {
+      const [cam, cids, auds] = await Promise.all([
+        api.get(`/campaigns/${c.id}`),
+        api.get('/caller-ids'),
+        api.get('/audio'),
+      ]);
+      setCallerIds(cids.callerIds || []);
+      setAudios((auds.audio || []).filter((a) => a.status === 'ready'));
+      setLiveCallerId(cam.campaign.caller_id_id ? String(cam.campaign.caller_id_id) : '');
+      setLiveAudioId(cam.campaign.audio_file_id ? String(cam.campaign.audio_file_id) : '');
+      setLiveMessage(cam.campaign.message_template || '');
+      setLiveEditFor({ ...c, channel: cam.campaign.channel, status: cam.campaign.status });
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  async function saveLiveEdit() {
+    const c = liveEditFor;
+    setLiveSaving(true);
+    try {
+      const body =
+        c.channel === 'sms'
+          ? { messageTemplate: liveMessage }
+          : {
+              callerIdId: liveCallerId ? Number(liveCallerId) : null,
+              ...(liveAudioId ? { audioFileId: Number(liveAudioId) } : {}),
+            };
+      await api.patch(`/campaigns/${c.id}`, body);
+      setLiveEditFor(null);
+      load();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setLiveSaving(false);
+    }
   }
 
   // Click on a row: fetch the campaign's per-status counts and show a summary.
@@ -261,6 +311,11 @@ export default function Campaigns() {
                     {['running', 'paused'].includes(c.status) && (
                       <button className="btn small" onClick={() => control(c.id, 'stop')}>
                         Stop
+                      </button>
+                    )}
+                    {['running', 'paused'].includes(c.status) && (
+                      <button className="btn small" onClick={() => openLiveEdit(c)}>
+                        {c.channel === 'sms' ? 'Edit message' : 'Caller ID / Audio'}
                       </button>
                     )}
                     {['completed', 'stopped', 'failed'].includes(c.status) &&
@@ -482,6 +537,76 @@ export default function Campaigns() {
         </div>
         );
       })()}
+
+      {liveEditFor && (
+        <div className="modal-backdrop" onClick={() => setLiveEditFor(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>
+              {liveEditFor.channel === 'sms' ? 'Edit message' : 'Change caller ID & recording'} —{' '}
+              {liveEditFor.name}
+            </h3>
+            <p className="muted small">
+              This campaign is <strong>{liveEditFor.status === 'running' ? 'live' : liveEditFor.status}</strong>.
+              Changes apply to {liveEditFor.channel === 'sms' ? 'messages' : 'numbers'} not yet{' '}
+              {liveEditFor.channel === 'sms' ? 'sent' : 'dialed'} — ones already{' '}
+              {liveEditFor.channel === 'sms' ? 'sent' : 'in progress'} are unaffected.
+            </p>
+
+            {liveEditFor.channel === 'sms' ? (
+              <div>
+                <label>Message</label>
+                <textarea
+                  rows={4}
+                  maxLength={1600}
+                  value={liveMessage}
+                  onChange={(e) => setLiveMessage(e.target.value)}
+                />
+                <p className="muted small">
+                  {liveMessage.length} characters. Variables {'{name}'} / {'{amount}'} still fill from the list.
+                </p>
+              </div>
+            ) : (
+              <div>
+                <label>Caller ID</label>
+                <select value={liveCallerId} onChange={(e) => setLiveCallerId(e.target.value)}>
+                  <option value="">— trunk default —</option>
+                  {callerIds.map((ci) => (
+                    <option key={ci.id} value={ci.id}>
+                      {ci.label} ({ci.number})
+                    </option>
+                  ))}
+                </select>
+                <label style={{ marginTop: 10 }}>Recording</label>
+                <select value={liveAudioId} onChange={(e) => setLiveAudioId(e.target.value)}>
+                  <option value="">— choose —</option>
+                  {audios.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                      {a.duration_sec ? ` (${a.duration_sec}s)` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="form-actions">
+              <button className="btn ghost" onClick={() => setLiveEditFor(null)}>
+                Cancel
+              </button>
+              <button
+                className="btn primary"
+                disabled={
+                  liveSaving ||
+                  (liveEditFor.channel === 'sms' ? !liveMessage.trim() : !liveAudioId)
+                }
+                onClick={saveLiveEdit}
+              >
+                {liveSaving ? 'Saving…' : 'Save changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

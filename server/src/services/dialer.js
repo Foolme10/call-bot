@@ -545,6 +545,19 @@ async function pauseCampaign(campaignId) {
   monitor.publish(campaignId, { type: 'campaign', status: 'paused' });
 }
 
+// Apply a live edit (caller ID / recording changed while running or paused) to
+// the in-memory runner so numbers not yet dialed use the new values. Calls
+// already in progress keep whatever they started with. No-op if no runner.
+async function refreshCampaign(campaignId) {
+  const runner = runners.get(campaignId);
+  if (!runner) return;
+  const c = await loadCampaignRow(campaignId);
+  if (!c) return;
+  runner.callerId = c.caller_number || null;
+  runner.media = c.audio_stored ? `sound:${path.posix.join('callbot', c.audio_stored)}` : null;
+  logger.info(`Campaign ${campaignId} runner refreshed (callerId/media updated)`);
+}
+
 async function stopCampaign(campaignId) {
   const runner = runners.get(campaignId);
   if (runner) {
@@ -639,6 +652,7 @@ module.exports = {
   pauseCampaign,
   stopCampaign,
   rerunCampaign,
+  refreshCampaign,
   // exported for unit tests
   _internal: { mapCause, shouldRetry },
 };

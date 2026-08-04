@@ -137,6 +137,11 @@ const config = {
     ),
     // Seconds before a single send HTTP request is aborted as a timeout.
     requestTimeout: Math.max(1, Number(process.env.SMS_REQUEST_TIMEOUT || 30)),
+    // The gateway prepends a sender label (e.g. "RM0 BRAND: ") to every message,
+    // which eats into the SMS length. Reserve this many characters in the
+    // composer's count/segment estimate. SMS_PREFIX_LABEL is shown in the note.
+    prefixChars: Math.max(0, Number(process.env.SMS_PREFIX_CHARS || 0)),
+    prefixLabel: process.env.SMS_PREFIX_LABEL || '',
   },
 
   storage: {

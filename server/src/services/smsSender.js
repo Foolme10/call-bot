@@ -371,6 +371,17 @@ async function pauseCampaign(campaignId) {
   monitor.publish(campaignId, { type: 'campaign', status: 'paused' });
 }
 
+// Apply a live edit (message changed while running/paused) to the in-memory
+// runner so not-yet-sent messages use the new text. No-op if no runner.
+async function refreshCampaign(campaignId) {
+  const runner = runners.get(campaignId);
+  if (!runner) return;
+  const c = await loadCampaignRow(campaignId);
+  if (!c) return;
+  runner.template = c.message_template || '';
+  logger.info(`SMS campaign ${campaignId} runner refreshed (message updated)`);
+}
+
 async function stopCampaign(campaignId) {
   const runner = runners.get(campaignId);
   if (runner) {
@@ -453,6 +464,7 @@ module.exports = {
   pauseCampaign,
   stopCampaign,
   rerunCampaign,
+  refreshCampaign,
   // exported for unit tests
   _internal: { renderTemplate, shouldRetry },
 };

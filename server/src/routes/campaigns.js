@@ -19,7 +19,12 @@ router.get('/meta/pacing', (_req, res) => {
   res.json({
     maxConcurrent: config.calls.maxConcurrent,
     maxCps: config.calls.maxCps,
-    sms: { maxCps: config.sms.maxCps, configured: !!config.sms.authKey },
+    sms: {
+      maxCps: config.sms.maxCps,
+      configured: !!config.sms.authKey,
+      prefixChars: config.sms.prefixChars,
+      prefixLabel: config.sms.prefixLabel,
+    },
   });
 });
 
@@ -408,10 +413,11 @@ router.post(
   })
 );
 
-// Edit a campaign that hasn't run yet (draft/scheduled): name, audio, caller
-// ID, retry settings, AMD, and schedule. The contact list itself can't change —
-// create a new campaign for a different list. Pace isn't recomputed (it depends
-// only on list size and trunk caps, neither of which changes here).
+// Edit a campaign. Before it runs (draft/scheduled): name, audio, caller ID,
+// retry settings, AMD, schedule. While it's live (running/paused): ONLY the
+// caller ID + recording (voice) or message (SMS) — applied to numbers not yet
+// dialed. The contact list itself can never change here. Pace isn't recomputed.
+const LIVE_EDIT_FIELDS = ['callerIdId', 'audioFileId', 'messageTemplate'];
 const editSchema = z.object({
   name: z.string().min(1).max(128).optional(),
   callerIdId: z.coerce.number().int().positive().nullable().optional(),
@@ -428,12 +434,22 @@ router.patch(
   '/:id',
   asyncHandler(async (req, res) => {
     const campaign = await getOwnedCampaign(req.params.id, req.user);
-    if (!['draft', 'scheduled'].includes(campaign.status)) {
-      throw new ApiError(409, 'Only campaigns that have not started can be edited');
+    const isDraft = ['draft', 'scheduled'].includes(campaign.status);
+    const isLive = ['running', 'paused'].includes(campaign.status);
+    if (!isDraft && !isLive) {
+      throw new ApiError(409, 'This campaign has finished and can no longer be edited');
     }
     const parsed = editSchema.safeParse(req.body);
     if (!parsed.success) throw new ApiError(400, 'Invalid campaign data', parsed.error.flatten());
     const d = parsed.data;
+
+    // A live campaign can only change the caller ID / recording / message.
+    if (isLive) {
+      const bad = Object.keys(d).filter((k) => !LIVE_EDIT_FIELDS.includes(k));
+      if (bad.length) {
+        throw new ApiError(409, 'A running campaign can only change its caller ID, recording, or message');
+      }
+    }
 
     if (d.audioFileId !== undefined) {
       const audio = await db.query(
@@ -498,6 +514,13 @@ router.patch(
     if (sets.length === 0) throw new ApiError(400, 'Nothing to update');
 
     await db.execute(`UPDATE campaigns SET ${sets.join(', ')} WHERE id = :id`, params);
+    // Live campaign: push the new caller ID / recording / message to the running
+    // engine so not-yet-dialed numbers pick it up.
+    if (isLive) {
+      await engineFor(campaign.channel)
+        .refreshCampaign(campaign.id)
+        .catch(() => {});
+    }
     const fresh = await getOwnedCampaign(campaign.id, req.user);
     res.json({ ok: true, campaign: fresh });
   })

@@ -30,14 +30,17 @@ function renderTemplate(template, { name, amount }) {
 }
 
 // Rough SMS segment estimate. Unicode (non-GSM) messages pack fewer chars.
-function smsSegments(text) {
-  const len = text.length;
-  if (len === 0) return { len, segments: 0, unicode: false };
+// `prefixChars` reserves space for a label the gateway prepends to every
+// message, so the count reflects what's actually sent.
+function smsSegments(text, prefixChars = 0) {
+  const bodyLen = text.length;
+  const totalLen = bodyLen + Math.max(0, prefixChars);
+  if (totalLen === 0) return { bodyLen, totalLen, segments: 0, unicode: false };
   const unicode = /[^\x00-\x7F]/.test(text);
   const single = unicode ? 70 : 160;
   const multi = unicode ? 67 : 153;
-  const segments = len <= single ? 1 : Math.ceil(len / multi);
-  return { len, segments, unicode };
+  const segments = totalLen <= single ? 1 : Math.ceil(totalLen / multi);
+  return { bodyLen, totalLen, segments, unicode };
 }
 
 export default function NewCampaign() {
@@ -372,7 +375,9 @@ export default function NewCampaign() {
   const previewName = sampleRow && nameColumn ? sampleRow[nameColumn] : 'Alex';
   const previewAmount = sampleRow && amountColumn ? sampleRow[amountColumn] : '100';
   const previewText = renderTemplate(messageTemplate, { name: previewName, amount: previewAmount });
-  const seg = smsSegments(messageTemplate);
+  const smsPrefixChars = (pacing && pacing.sms && pacing.sms.prefixChars) || 0;
+  const smsPrefixLabel = (pacing && pacing.sms && pacing.sms.prefixLabel) || '';
+  const seg = smsSegments(messageTemplate, smsPrefixChars);
   const smsConfigured = !pacing || !pacing.sms || pacing.sms.configured !== false;
 
   return (
@@ -625,9 +630,17 @@ export default function NewCampaign() {
             />
           )}
           <div className="muted small" style={{ marginTop: 6 }}>
-            {seg.len} characters · ~{seg.segments} SMS segment{seg.segments === 1 ? '' : 's'}
+            {seg.bodyLen} characters
+            {smsPrefixChars > 0 ? ` + ${smsPrefixChars} prepended = ${seg.totalLen}` : ''} · ~
+            {seg.segments} SMS segment{seg.segments === 1 ? '' : 's'}
             {seg.unicode ? ' · contains non-GSM characters (shorter segments)' : ''}
           </div>
+          {smsPrefixChars > 0 && (
+            <div className="muted small" style={{ color: '#e3b341' }}>
+              ⚠ Every message is sent with {smsPrefixLabel ? `“${smsPrefixLabel}”` : 'a sender label'} prepended
+              ({smsPrefixChars} characters) — already counted above, so keep your text shorter to stay within one segment.
+            </div>
+          )}
           {messageTemplate.trim() && (
             <div className="pace-preview" style={{ marginTop: 10 }}>
               <div className="muted small" style={{ marginBottom: 4 }}>
