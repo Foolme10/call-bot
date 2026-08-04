@@ -450,6 +450,11 @@ router.patch(
         throw new ApiError(409, 'A running campaign can only change its caller ID, recording, or message');
       }
     }
+    // A blank/whitespace-only message would blast empty texts — reject it here
+    // too (zod's min(1) lets a single space through), matching the create path.
+    if (d.messageTemplate !== undefined && !d.messageTemplate.trim()) {
+      throw new ApiError(400, 'Message text cannot be blank');
+    }
 
     if (d.audioFileId !== undefined) {
       const audio = await db.query(
