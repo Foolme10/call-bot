@@ -5,9 +5,22 @@ const { z } = require('zod');
 const db = require('../db');
 const { ApiError, asyncHandler } = require('../http');
 const { requireAuth } = require('../middleware/auth');
+const { findNonLatin } = require('../services/smsText');
 
 const router = express.Router();
 router.use(requireAuth);
+
+// Template body must be plain Latin (English) — non-Latin scripts force costly
+// unicode SMS and can be blocked by networks.
+function assertLatinBody(body) {
+  const bad = findNonLatin(body);
+  if (bad.length) {
+    throw new ApiError(
+      400,
+      `Template contains characters that aren't allowed: ${bad.join(' ')} — use plain Latin (English) characters only.`
+    );
+  }
+}
 
 // Saved SMS message templates, scoped to the requesting user (like caller IDs).
 
@@ -33,6 +46,7 @@ router.post(
     const parsed = bodySchema.safeParse(req.body);
     if (!parsed.success) throw new ApiError(400, 'A template needs a name and message text');
     const { name, body } = parsed.data;
+    assertLatinBody(body);
     const result = await db.execute(
       'INSERT INTO sms_templates (user_id, name, body) VALUES (:uid, :name, :body)',
       { uid: req.user.id, name, body }
@@ -59,6 +73,7 @@ router.patch(
       params.name = d.name;
     }
     if (d.body !== undefined) {
+      assertLatinBody(d.body);
       sets.push('body = :body');
       params.body = d.body;
     }

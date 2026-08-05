@@ -10,9 +10,22 @@ const { requireAuth } = require('../middleware/auth');
 const { resolveTmpUpload } = require('../middleware/upload');
 const { extractContacts, parseManual } = require('../services/fileParser');
 const { engineFor } = require('../services/campaignEngine');
+const { findNonLatin } = require('../services/smsText');
 
 const router = express.Router();
 router.use(requireAuth);
+
+// SMS body must be plain Latin — reject (with the offending characters) so a
+// message can't slip through in a script that forces unicode / gets blocked.
+function assertLatinSms(text) {
+  const bad = findNonLatin(text);
+  if (bad.length) {
+    throw new ApiError(
+      400,
+      `Message contains characters that aren't allowed: ${bad.join(' ')} — SMS must use plain Latin (English) characters only.`
+    );
+  }
+}
 
 // Trunk capacity, so the UI can show the auto-pacing ceiling.
 router.get('/meta/pacing', (_req, res) => {
@@ -155,6 +168,7 @@ router.post(
       if (!d.messageTemplate || !d.messageTemplate.trim()) {
         throw new ApiError(400, 'SMS campaigns need message text');
       }
+      assertLatinSms(d.messageTemplate);
     } else {
       if (!d.audioFileId) throw new ApiError(400, 'Voice campaigns need an audio recording');
       const audio = await db.query(
@@ -456,6 +470,7 @@ router.patch(
     if (d.messageTemplate !== undefined && !d.messageTemplate.trim()) {
       throw new ApiError(400, 'Message text cannot be blank');
     }
+    if (d.messageTemplate !== undefined) assertLatinSms(d.messageTemplate);
 
     if (d.audioFileId !== undefined) {
       const audio = await db.query(

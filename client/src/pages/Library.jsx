@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, fetchMediaUrl } from '../api.js';
 import SmsNotice from '../components/SmsNotice.jsx';
+import { findNonLatin } from '../smsText.js';
 
 export default function Library() {
   const [audio, setAudio] = useState([]);
@@ -98,6 +99,11 @@ export default function Library() {
     e.preventDefault();
     setError('');
     if (!tplName.trim() || !tplBody.trim()) return setError('A template needs a name and message text.');
+    const bad = findNonLatin(tplBody);
+    if (bad.length)
+      return setError(
+        `Remove non-Latin characters from the message (${bad.join(' ')}). Templates must use plain Latin (English) characters only.`
+      );
     try {
       if (editingTpl) {
         await api.patch(`/sms-templates/${editingTpl}`, { name: tplName, body: tplBody });
@@ -275,13 +281,20 @@ export default function Library() {
             value={tplBody}
             onChange={(e) => setTplBody(e.target.value)}
           />
+          {findNonLatin(tplBody).length > 0 && (
+            <div className="alert error" style={{ marginTop: 8 }}>
+              ⚠ Remove these non-Latin characters:{' '}
+              <strong>{findNonLatin(tplBody).join(' ')}</strong>. Templates must use plain Latin
+              (English) characters only.
+            </div>
+          )}
           <div className="form-actions" style={{ marginTop: 10 }}>
             {editingTpl && (
               <button type="button" className="btn ghost" onClick={cancelEditTemplate}>
                 Cancel
               </button>
             )}
-            <button className="btn primary">
+            <button className="btn primary" disabled={findNonLatin(tplBody).length > 0}>
               {editingTpl ? 'Save changes' : 'Add template'}
             </button>
           </div>

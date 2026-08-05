@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, fetchMediaUrl } from '../api.js';
 import SmsNotice from '../components/SmsNotice.jsx';
+import { findNonLatin } from '../smsText.js';
 
 const guess = (cols, re) => cols.find((c) => re.test(c)) || '';
 
@@ -276,6 +277,10 @@ export default function NewCampaign() {
     if (readOnly) return; // live campaign — nothing to save
     if (isSms) {
       if (!messageTemplate.trim()) return setError('Write the SMS message to send.');
+      if (smsBadChars.length)
+        return setError(
+          `Remove non-Latin characters from the message (${smsBadChars.join(' ')}). SMS must use plain Latin (English) characters only.`
+        );
     } else if (!audioFileId) {
       return setError('Choose an audio recording to play.');
     }
@@ -382,6 +387,7 @@ export default function NewCampaign() {
   const previewText =
     smsPrepend + renderTemplate(messageTemplate, { name: previewName, amount: previewAmount });
   const seg = smsSegments(messageTemplate, smsReserved);
+  const smsBadChars = isSms ? findNonLatin(messageTemplate) : [];
   const smsConfigured = !pacing || !pacing.sms || pacing.sms.configured !== false;
 
   return (
@@ -651,6 +657,13 @@ export default function NewCampaign() {
               prepended — {smsReserved} characters, already counted above.
             </div>
           )}
+          {smsBadChars.length > 0 && (
+            <div className="alert error" style={{ marginTop: 8 }}>
+              ⚠ Remove these non-Latin characters before sending:{' '}
+              <strong>{smsBadChars.join(' ')}</strong>. SMS must use plain Latin (English) characters
+              only — other scripts are more expensive and may be blocked.
+            </div>
+          )}
           {messageTemplate.trim() && (
             <div className="pace-preview" style={{ marginTop: 10 }}>
               <div className="muted small" style={{ marginBottom: 4 }}>
@@ -849,7 +862,7 @@ export default function NewCampaign() {
           {readOnly ? 'Back' : 'Cancel'}
         </button>
         {!readOnly && (
-          <button className="btn primary" disabled={busy}>
+          <button className="btn primary" disabled={busy || smsBadChars.length > 0}>
             {busy
               ? 'Saving…'
               : editMode
