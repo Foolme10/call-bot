@@ -191,7 +191,9 @@ class SmsRunner {
     const attempt = (row.attempts || 0) + 1;
     const totalDials = (row.total_dials || 0) + 1;
     try {
-      const content = renderTemplate(this.template, { name: row.name, amount: row.amount });
+      // Every message goes out with the configured identifier (e.g. "DCA: ")
+      // prepended — enforced here so no send can omit it.
+      const content = config.sms.prepend + renderTemplate(this.template, { name: row.name, amount: row.amount });
       const result = await smsProvider.sendSms({ to: row.phone, content });
 
       // Every outcome write is guarded by `status = 'dialing'` so it only lands

@@ -291,6 +291,9 @@ SMS_MAX_CONCURRENT=20
 # so the composer's length/segment count reflects the real sent message.
 SMS_PREFIX_CHARS=0
 SMS_PREFIX_LABEL=
+# Prepended to EVERY outgoing SMS (compliance identifier). "DCA:" by default;
+# set empty to disable. A trailing space is added automatically.
+SMS_PREPEND=DCA:
 
 AUDIO_DIR=$AUDIO_DIR
 UPLOAD_TMP_DIR=$APP_DIR/server/uploads/tmp

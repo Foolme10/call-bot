@@ -374,10 +374,13 @@ export default function NewCampaign() {
   const sampleRow = preview && preview.sample && preview.sample[0];
   const previewName = sampleRow && nameColumn ? sampleRow[nameColumn] : 'Alex';
   const previewAmount = sampleRow && amountColumn ? sampleRow[amountColumn] : '100';
-  const previewText = renderTemplate(messageTemplate, { name: previewName, amount: previewAmount });
-  const smsPrefixChars = (pacing && pacing.sms && pacing.sms.prefixChars) || 0;
+  const smsPrepend = (pacing && pacing.sms && pacing.sms.prepend) || ''; // e.g. "DCA: " (auto-added)
+  const smsPrefixChars = (pacing && pacing.sms && pacing.sms.prefixChars) || 0; // gateway sender label (count only)
   const smsPrefixLabel = (pacing && pacing.sms && pacing.sms.prefixLabel) || '';
-  const seg = smsSegments(messageTemplate, smsPrefixChars);
+  const smsReserved = smsPrepend.length + smsPrefixChars; // total chars eaten before the body
+  const previewText =
+    smsPrepend + renderTemplate(messageTemplate, { name: previewName, amount: previewAmount });
+  const seg = smsSegments(messageTemplate, smsReserved);
   const smsConfigured = !pacing || !pacing.sms || pacing.sms.configured !== false;
 
   return (
@@ -631,14 +634,19 @@ export default function NewCampaign() {
           )}
           <div className="muted small" style={{ marginTop: 6 }}>
             {seg.bodyLen} characters
-            {smsPrefixChars > 0 ? ` + ${smsPrefixChars} prepended = ${seg.totalLen}` : ''} · ~
+            {smsReserved > 0 ? ` + ${smsReserved} prepended = ${seg.totalLen}` : ''} · ~
             {seg.segments} SMS segment{seg.segments === 1 ? '' : 's'}
             {seg.unicode ? ' · contains non-GSM characters (shorter segments)' : ''}
           </div>
-          {smsPrefixChars > 0 && (
+          {(smsPrepend || smsPrefixChars > 0) && (
             <div className="muted small" style={{ color: '#e3b341' }}>
-              ⚠ Every message is sent with {smsPrefixLabel ? `“${smsPrefixLabel}”` : 'a sender label'} prepended
-              ({smsPrefixChars} characters) — already counted above, so keep your text shorter to stay within one segment.
+              ⚠ Every message is sent with
+              {smsPrepend ? ` “${smsPrepend.trimEnd()}”` : ''}
+              {smsPrepend && smsPrefixChars > 0 ? ' and' : ''}
+              {smsPrefixChars > 0
+                ? ` a sender label${smsPrefixLabel ? ` “${smsPrefixLabel}”` : ''} (${smsPrefixChars} chars)`
+                : ''}{' '}
+              prepended — {smsReserved} characters, already counted above.
             </div>
           )}
           {messageTemplate.trim() && (

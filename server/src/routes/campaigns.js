@@ -24,6 +24,7 @@ router.get('/meta/pacing', (_req, res) => {
       configured: !!config.sms.authKey,
       prefixChars: config.sms.prefixChars,
       prefixLabel: config.sms.prefixLabel,
+      prepend: config.sms.prepend,
     },
   });
 });

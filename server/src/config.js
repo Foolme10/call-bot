@@ -32,6 +32,17 @@ const MAX_TOTAL_DIALS = Math.max(0, Number(process.env.MAX_TOTAL_DIALS || 0));
 const SMS_MAX_CPS = Math.max(1, Number(process.env.SMS_MAX_CPS || 10));
 const SMS_MAX_CONCURRENT = Math.max(1, Number(process.env.SMS_MAX_CONCURRENT || 20));
 
+// Text the app prepends to EVERY outgoing SMS (a compliance identifier, e.g. a
+// debt-collection agency tag). Defaults to "DCA:" when unset; set SMS_PREPEND=
+// (empty) to disable. A single trailing space is ensured so it doesn't run into
+// the message ("DCA:" -> "DCA: "). Quote the value to keep custom spacing.
+const SMS_PREPEND = (() => {
+  const raw = process.env.SMS_PREPEND;
+  const v = raw === undefined ? 'DCA:' : raw;
+  if (!v) return '';
+  return /\s$/.test(v) ? v : `${v} `;
+})();
+
 // Roughly how long an average call ties up a line (ring + message + hangup).
 // Used only to estimate how many lines a list needs to finish in TARGET_MINUTES.
 const AVG_CALL_SECONDS = Math.max(5, Number(process.env.AVG_CALL_SECONDS || 20));
@@ -142,6 +153,8 @@ const config = {
     // composer's count/segment estimate. SMS_PREFIX_LABEL is shown in the note.
     prefixChars: Math.max(0, Number(process.env.SMS_PREFIX_CHARS || 0)),
     prefixLabel: process.env.SMS_PREFIX_LABEL || '',
+    // Prepended to every message the app sends (default "DCA: ").
+    prepend: SMS_PREPEND,
   },
 
   storage: {
