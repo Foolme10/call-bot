@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, fetchMediaUrl } from '../api.js';
+import SmsNotice from '../components/SmsNotice.jsx';
 
 export default function Library() {
   const [audio, setAudio] = useState([]);
@@ -258,6 +259,7 @@ export default function Library() {
           per recipient. Saved templates appear in the “Load a saved template” dropdown when you
           compose an SMS campaign.
         </p>
+        <SmsNotice />
         <form onSubmit={saveTemplate} style={{ marginBottom: 16 }}>
           <label>Template name</label>
           <input

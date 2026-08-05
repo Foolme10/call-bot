@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, fetchMediaUrl } from '../api.js';
+import SmsNotice from '../components/SmsNotice.jsx';
 
 const guess = (cols, re) => cols.find((c) => re.test(c)) || '';
 
@@ -586,6 +587,7 @@ export default function NewCampaign() {
             Write the SMS. Insert variables to personalize each message — they’re filled from the
             contact list per recipient.
           </p>
+          <SmsNotice />
           {!readOnly && (
             <>
               <div className="radio-row" style={{ marginBottom: 8, flexWrap: 'wrap' }}>
