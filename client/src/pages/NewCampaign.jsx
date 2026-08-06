@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, fetchMediaUrl } from '../api.js';
 import SmsNotice from '../components/SmsNotice.jsx';
-import { findNonLatin, smsSegments } from '../smsText.js';
+import { findNonLatin, smsSegments, renderTemplate } from '../smsText.js';
 
 const guess = (cols, re) => cols.find((c) => re.test(c)) || '';
 
@@ -21,15 +21,6 @@ const RETRY_OUTCOMES = [
   { v: 'congestion', label: 'Congestion' },
 ];
 
-// Fill {name}/{amount} the same way the server does — for the live preview.
-// Single-pass so a value containing a token isn't re-expanded.
-function renderTemplate(template, { name, amount }) {
-  const values = {
-    name: name == null ? '' : String(name),
-    amount: amount == null ? '' : String(amount),
-  };
-  return String(template || '').replace(/\{\s*(name|amount)\s*\}/gi, (_m, key) => values[key.toLowerCase()]);
-}
 
 
 export default function NewCampaign() {

@@ -2,6 +2,16 @@
 // scripts / emoji / smart quotes force costly unicode encoding and can be
 // blocked by networks. Returns the unique disallowed characters (empty = OK).
 // Iterates by code point so emoji count as a single character.
+// Fill {name}/{amount} placeholders (case-insensitive) from a row, single-pass
+// so a value containing a token isn't re-expanded. Missing -> empty string.
+export function renderTemplate(template, { name, amount } = {}) {
+  const values = {
+    name: name == null ? '' : String(name),
+    amount: amount == null ? '' : String(amount),
+  };
+  return String(template || '').replace(/\{\s*(name|amount)\s*\}/gi, (_m, key) => values[key.toLowerCase()]);
+}
+
 // Rough SMS segment estimate. Unicode (non-GSM) messages pack fewer chars.
 // `prefixChars` reserves space for text prepended before the body (e.g. the
 // "DCA: " identifier + the gateway sender label) so the count reflects what's

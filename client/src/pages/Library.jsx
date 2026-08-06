@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, fetchMediaUrl } from '../api.js';
 import SmsNotice from '../components/SmsNotice.jsx';
-import { findNonLatin, smsSegments } from '../smsText.js';
+import { findNonLatin, smsSegments, renderTemplate } from '../smsText.js';
 
 export default function Library() {
   const [audio, setAudio] = useState([]);
@@ -24,6 +24,7 @@ export default function Library() {
   const [tplBody, setTplBody] = useState('');
   const [editingTpl, setEditingTpl] = useState(null); // id being edited, or null
   const [smsMeta, setSmsMeta] = useState({ prepend: '', prefixChars: 0 }); // for the segment counter
+  const tplBodyRef = useRef(null); // for inserting {name}/{amount} at the cursor
 
   async function load() {
     try {
@@ -104,6 +105,24 @@ export default function Library() {
   async function delCallerId(id) {
     if (!confirm('Delete this caller ID?')) return;
     await api.del(`/caller-ids/${id}`).then(load).catch((e) => alert(e.message));
+  }
+
+  // Insert a {variable} at the message cursor position (same as the composer).
+  function insertTplVar(token) {
+    const el = tplBodyRef.current;
+    if (!el) {
+      setTplBody((b) => b + token);
+      return;
+    }
+    const start = el.selectionStart ?? tplBody.length;
+    const end = el.selectionEnd ?? tplBody.length;
+    const next = tplBody.slice(0, start) + token + tplBody.slice(end);
+    setTplBody(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + token.length;
+      el.setSelectionRange(pos, pos);
+    });
   }
 
   async function saveTemplate(e) {
@@ -288,7 +307,16 @@ export default function Library() {
             onChange={(e) => setTplName(e.target.value)}
           />
           <label style={{ marginTop: 8 }}>Message</label>
+          <div className="radio-row" style={{ marginBottom: 8, flexWrap: 'wrap' }}>
+            <button type="button" className="btn small ghost" onClick={() => insertTplVar('{name}')}>
+              + Insert {'{name}'}
+            </button>
+            <button type="button" className="btn small ghost" onClick={() => insertTplVar('{amount}')}>
+              + Insert {'{amount}'}
+            </button>
+          </div>
           <textarea
+            ref={tplBodyRef}
             rows={3}
             maxLength={1600}
             placeholder="Hi {name}, your outstanding amount is RM{amount}. Please settle by Friday."
@@ -314,6 +342,16 @@ export default function Library() {
               ⚠ Remove these non-Latin characters:{' '}
               <strong>{findNonLatin(tplBody).join(' ')}</strong>. Templates must use plain Latin
               (English) characters only.
+            </div>
+          )}
+          {tplBody.trim() && (
+            <div className="pace-preview" style={{ marginTop: 10 }}>
+              <div className="muted small" style={{ marginBottom: 4 }}>
+                Preview (example values):
+              </div>
+              <div style={{ whiteSpace: 'pre-wrap' }}>
+                {smsMeta.prepend + renderTemplate(tplBody, { name: 'Alex', amount: '100' })}
+              </div>
             </div>
           )}
           <div className="form-actions" style={{ marginTop: 10 }}>
