@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS call_logs (
                   NOT NULL DEFAULT 'queued',
   hangup_cause  INT NULL,          -- voice: Q.850 code; SMS: raw gateway status code
   error_detail  VARCHAR(255) NULL, -- SMS: human-readable failure reason (e.g. "Insufficient credit")
+  provider_msgid VARCHAR(64) NULL, -- SMS: gateway message id, for matching delivery reports later
   channel       VARCHAR(128) NULL,            -- Asterisk channel id, for live monitor
   attempts      TINYINT UNSIGNED NOT NULL DEFAULT 0,
   next_attempt_at DATETIME NULL,              -- when a requeued retry becomes eligible to dial
@@ -156,6 +157,7 @@ CREATE TABLE IF NOT EXISTS call_logs (
   KEY idx_calllogs_campaign_status (campaign_id, status),
   KEY idx_calllogs_queue (campaign_id, status, next_attempt_at),  -- retry-aware dial queue
   KEY idx_calllogs_channel (channel),
+  KEY idx_calllogs_msgid (provider_msgid),
   CONSTRAINT fk_calllogs_campaign FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE,
   CONSTRAINT fk_calllogs_contact  FOREIGN KEY (contact_id)  REFERENCES contacts(id)  ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

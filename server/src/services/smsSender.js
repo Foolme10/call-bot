@@ -203,11 +203,11 @@ class SmsRunner {
       if (result.ok) {
         const r = await db.execute(
           `UPDATE call_logs
-              SET status = 'sent', hangup_cause = :code, error_detail = NULL,
+              SET status = 'sent', hangup_cause = :code, provider_msgid = :msgid, error_detail = NULL,
                   end_time = UTC_TIMESTAMP(),
                   duration_sec = TIMESTAMPDIFF(SECOND, dial_start, UTC_TIMESTAMP())
             WHERE id = :id AND status = 'dialing'`,
-          { code: result.code, id: row.id }
+          { code: result.code, msgid: result.msgid || null, id: row.id }
         );
         if (r.affectedRows > 0) this.publishOutcome(row, 'sent', attempt);
         return;

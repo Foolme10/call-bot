@@ -27,7 +27,7 @@ const GLOBAL_MAX_CONCURRENT = Math.max(
 // primary guard. Set MAX_TOTAL_DIALS>0 in .env to also cap per number.
 const MAX_TOTAL_DIALS = Math.max(0, Number(process.env.MAX_TOTAL_DIALS || 0));
 
-// SMS gateway (nuavox) pacing ceilings. SMS sends are quick HTTP GETs, so the
+// SMS gateway (nxsip) pacing ceilings. SMS sends are quick HTTP GETs, so the
 // only limits are how fast we fire requests (cps) and how many stay in flight.
 const SMS_MAX_CPS = Math.max(1, Number(process.env.SMS_MAX_CPS || 10));
 const SMS_MAX_CONCURRENT = Math.max(1, Number(process.env.SMS_MAX_CONCURRENT || 20));
@@ -136,8 +136,9 @@ const config = {
   },
 
   sms: {
-    // nuavox HTTP API. Endpoint takes ?action=send-sms&auth-key=..&to=..&content=..
-    apiUrl: process.env.SMS_API_URL || 'http://sms.nuavox.com/api',
+    // nxsip HTTP API. Endpoint takes ?action=send-sms&auth-key=..&to=..&content=..
+    // and responds with JSON {"status":1,"msgid":"NX…"}.
+    apiUrl: process.env.SMS_API_URL || 'https://api.sms.nxsip.com/',
     authKey: process.env.SMS_AUTH_KEY || '', // blank = SMS not configured (sends fail with a clear error)
     maxCps: SMS_MAX_CPS,
     maxConcurrent: SMS_MAX_CONCURRENT,

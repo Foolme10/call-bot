@@ -4,11 +4,13 @@ const config = require('../config');
 const logger = require('../logger');
 
 // ───────────────────────────────────────────────────────────────────────────
-// nuavox SMS gateway client.
+// SMS gateway client (nxsip).
 //
-//   GET http://sms.nuavox.com/api?action=send-sms&auth-key=KEY&to=NUMBER&content=TEXT
+//   GET {SMS_API_URL}?action=send-sms&auth-key=KEY&to=NUMBER&content=TEXT
 //
-// The response body is a single status code:
+// nxsip responds with JSON: {"status":1,"msgid":"NX26…"}. (The older nuavox
+// gateway returned a bare status code, which this client still parses as a
+// fallback.) `status` uses the same codes:
 //   1      Queued For Sending (success)
 //   0      Authentication failure
 //   -1     Missing/invalid parameters
@@ -16,8 +18,8 @@ const logger = require('../logger');
 //   -3     Message too long
 //   -4     Unsupported destination country
 //   -9999  Other/gateway error
-// There is no delivery receipt, so "queued for sending" (1) is the best signal
-// we get — it maps to our 'sent' status.
+// `msgid` is stored so a later delivery report (DLR) can be matched back to the
+// message. The synchronous status only means "accepted", not "delivered".
 // ───────────────────────────────────────────────────────────────────────────
 
 const CODE_MEANING = {
@@ -46,17 +48,18 @@ function isTransient(code) {
 }
 
 // Send one SMS. Never throws — always resolves to a normalized result:
-//   { ok, code, detail }  where ok === (code === 1).
+//   { ok, code, msgid, detail }  where ok === (code === 1). `msgid` is the
+//   gateway's message id (nxsip), kept for matching later delivery reports.
 async function sendSms({ to, content }) {
   if (!config.sms.authKey) {
-    return { ok: false, code: null, detail: 'SMS gateway not configured (SMS_AUTH_KEY missing)' };
+    return { ok: false, code: null, msgid: null, detail: 'SMS gateway not configured (SMS_AUTH_KEY missing)' };
   }
 
   let url;
   try {
     url = new URL(config.sms.apiUrl);
   } catch (_e) {
-    return { ok: false, code: null, detail: `Invalid SMS_API_URL: ${config.sms.apiUrl}` };
+    return { ok: false, code: null, msgid: null, detail: `Invalid SMS_API_URL: ${config.sms.apiUrl}` };
   }
   url.searchParams.set('action', 'send-sms');
   url.searchParams.set('auth-key', config.sms.authKey);
@@ -73,20 +76,42 @@ async function sendSms({ to, content }) {
       // Deliberately drop the response body — an upstream that echoes the
       // request could include the auth-key (it travels in the query string),
       // and this detail is persisted + shown in reports.
-      return { ok: false, code: null, detail: `HTTP ${res.status} from gateway` };
+      return { ok: false, code: null, msgid: null, detail: `HTTP ${res.status} from gateway` };
     }
-    // The body is the status code; take the first integer token to be safe.
-    const m = body.match(/-?\d+/);
-    const code = m ? parseInt(m[0], 10) : NaN;
+
+    // nxsip responds with JSON: {"status":1,"msgid":"NX…"}. nuavox returned a
+    // bare status code. Parse JSON first, then fall back to the first integer.
+    let code = NaN;
+    let msgid = null;
+    let providerMsg = null;
+    try {
+      const j = JSON.parse(body);
+      if (j && j.status !== undefined) {
+        code = parseInt(j.status, 10);
+        msgid = j.msgid || j.msgId || j.message_id || null;
+        providerMsg = j.error || j.message || j.detail || null;
+      }
+    } catch (_e) {
+      /* not JSON — fall through to bare-code parsing */
+    }
     if (Number.isNaN(code)) {
-      return { ok: false, code: null, detail: redact(`Unexpected gateway response: ${body.slice(0, 120) || '(empty)'}`) };
+      const m = body.match(/-?\d+/);
+      code = m ? parseInt(m[0], 10) : NaN;
     }
-    const detail = CODE_MEANING[String(code)] || `Gateway status ${code}`;
-    return { ok: code === 1, code, detail };
+    if (Number.isNaN(code)) {
+      return {
+        ok: false,
+        code: null,
+        msgid: null,
+        detail: redact(`Unexpected gateway response: ${body.slice(0, 120) || '(empty)'}`),
+      };
+    }
+    const detail = providerMsg ? redact(providerMsg) : CODE_MEANING[String(code)] || `Gateway status ${code}`;
+    return { ok: code === 1, code, msgid: msgid || null, detail };
   } catch (err) {
     const detail = err.name === 'AbortError' ? 'Gateway request timed out' : `Network error: ${err.message}`;
     logger.warn(`SMS send failed: ${detail}`);
-    return { ok: false, code: null, detail: redact(detail) };
+    return { ok: false, code: null, msgid: null, detail: redact(detail) };
   } finally {
     clearTimeout(timer);
   }

@@ -99,6 +99,8 @@ async function main() {
   await ensureColumn('contacts', 'amount', 'amount VARCHAR(64) NULL AFTER phone');
   await ensureColumn('call_logs', 'amount', 'amount VARCHAR(64) NULL AFTER phone');
   await ensureColumn('call_logs', 'error_detail', 'error_detail VARCHAR(255) NULL AFTER hangup_cause');
+  await ensureColumn('call_logs', 'provider_msgid', 'provider_msgid VARCHAR(64) NULL AFTER error_detail');
+  await ensureIndex('call_logs', 'idx_calllogs_msgid', 'KEY idx_calllogs_msgid (provider_msgid)');
   if (!(await enumHasValue('call_logs', 'status', 'sent'))) {
     await conn.query(
       `ALTER TABLE \`call_logs\` MODIFY COLUMN status
