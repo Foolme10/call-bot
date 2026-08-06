@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, fetchMediaUrl } from '../api.js';
 import SmsNotice from '../components/SmsNotice.jsx';
-import { findNonLatin } from '../smsText.js';
+import { findNonLatin, smsSegments } from '../smsText.js';
 
 const guess = (cols, re) => cols.find((c) => re.test(c)) || '';
 
@@ -31,19 +31,6 @@ function renderTemplate(template, { name, amount }) {
   return String(template || '').replace(/\{\s*(name|amount)\s*\}/gi, (_m, key) => values[key.toLowerCase()]);
 }
 
-// Rough SMS segment estimate. Unicode (non-GSM) messages pack fewer chars.
-// `prefixChars` reserves space for a label the gateway prepends to every
-// message, so the count reflects what's actually sent.
-function smsSegments(text, prefixChars = 0) {
-  const bodyLen = text.length;
-  const totalLen = bodyLen + Math.max(0, prefixChars);
-  if (totalLen === 0) return { bodyLen, totalLen, segments: 0, unicode: false };
-  const unicode = /[^\x00-\x7F]/.test(text);
-  const single = unicode ? 70 : 160;
-  const multi = unicode ? 67 : 153;
-  const segments = totalLen <= single ? 1 : Math.ceil(totalLen / multi);
-  return { bodyLen, totalLen, segments, unicode };
-}
 
 export default function NewCampaign() {
   const navigate = useNavigate();

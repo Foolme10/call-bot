@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, fetchMediaUrl } from '../api.js';
 import SmsNotice from '../components/SmsNotice.jsx';
-import { findNonLatin } from '../smsText.js';
+import { findNonLatin, smsSegments } from '../smsText.js';
 
 export default function Library() {
   const [audio, setAudio] = useState([]);
@@ -23,6 +23,7 @@ export default function Library() {
   const [tplName, setTplName] = useState('');
   const [tplBody, setTplBody] = useState('');
   const [editingTpl, setEditingTpl] = useState(null); // id being edited, or null
+  const [smsMeta, setSmsMeta] = useState({ prepend: '', prefixChars: 0 }); // for the segment counter
 
   async function load() {
     try {
@@ -40,6 +41,16 @@ export default function Library() {
   }
   useEffect(() => {
     load();
+    // Prepend / gateway-label sizing so the template counter matches what's sent.
+    api
+      .get('/campaigns/meta/pacing')
+      .then((p) =>
+        setSmsMeta({
+          prepend: (p.sms && p.sms.prepend) || '',
+          prefixChars: (p.sms && p.sms.prefixChars) || 0,
+        })
+      )
+      .catch(() => {});
   }, []);
 
   async function uploadAudio(e) {
@@ -134,6 +145,9 @@ export default function Library() {
     if (editingTpl === id) cancelEditTemplate();
     await api.del(`/sms-templates/${id}`).then(load).catch((e) => alert(e.message));
   }
+
+  const tplReserved = (smsMeta.prepend ? smsMeta.prepend.length : 0) + (smsMeta.prefixChars || 0);
+  const tplSeg = smsSegments(tplBody, tplReserved);
 
   return (
     <div>
@@ -281,6 +295,20 @@ export default function Library() {
             value={tplBody}
             onChange={(e) => setTplBody(e.target.value)}
           />
+          <div className="muted small" style={{ marginTop: 6 }}>
+            {tplSeg.bodyLen} characters
+            {tplReserved > 0 ? ` + ${tplReserved} prepended = ${tplSeg.totalLen}` : ''} · ~
+            {tplSeg.segments} SMS segment{tplSeg.segments === 1 ? '' : 's'}
+            {tplSeg.unicode ? ' · contains non-GSM characters (shorter segments)' : ''}
+          </div>
+          {tplReserved > 0 && (
+            <div className="muted small">
+              Includes {smsMeta.prepend ? `“${smsMeta.prepend.trimEnd()}”` : ''}
+              {smsMeta.prepend && smsMeta.prefixChars > 0 ? ' + ' : ''}
+              {smsMeta.prefixChars > 0 ? `sender label (${smsMeta.prefixChars} chars)` : ''} prepended
+              to every message.
+            </div>
+          )}
           {findNonLatin(tplBody).length > 0 && (
             <div className="alert error" style={{ marginTop: 8 }}>
               ⚠ Remove these non-Latin characters:{' '}
