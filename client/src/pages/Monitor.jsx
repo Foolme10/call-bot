@@ -150,8 +150,11 @@ export default function Monitor() {
     let closed = false;
 
     const connect = () => {
-      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      const ws = new WebSocket(`${proto}://${location.host}/ws/monitor?token=${getToken()}`);
+      // NOTE: use window.location explicitly — the component's `location` is the
+      // react-router object (no .protocol/.host), which would make a broken
+      // ws://undefined/ URL and kill the live feed.
+      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      const ws = new WebSocket(`${proto}://${window.location.host}/ws/monitor?token=${getToken()}`);
       wsRef.current = ws;
       ws.onopen = () => {
         setConnected(true);
