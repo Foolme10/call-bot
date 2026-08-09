@@ -240,7 +240,7 @@ export default function Campaigns() {
           {filter === 'all' ? 'No campaigns yet. Create your first one.' : `No ${filter} campaigns.`}
         </div>
       ) : (
-        <div className="table-wrap">
+        <div className={`table-wrap${isAdmin ? ' wide-admin' : ''}`}>
         <table className={`table${isAdmin ? ' table-tight' : ''}`}>
           <thead>
             <tr>

@@ -159,9 +159,17 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 .actions-cell { text-align: right; white-space: nowrap; }
 .actions { display: inline-flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
 
-/* Admin campaigns list has an extra Owner column; tighten its padding so all
-   columns fit the shared app width (overflow-x scrolls if a small screen can't). */
-.table.table-tight th, .table.table-tight td { padding: 9px 10px; }
+/* The admin campaigns list has an extra Owner column and many more rows (all
+   users' campaigns), so JUST this table breaks out of the shared 1360px content
+   width to use most of the screen — giving the columns room to breathe. Regular
+   users keep the standard width. Tighter padding + ellipsis keep it tidy. */
+.table-wrap.wide-admin {
+  width: min(1720px, 97vw);
+  margin-left: 50%;
+  transform: translateX(-50%);
+}
+.table-wrap.wide-admin .table th { position: static; } /* sticky misbehaves inside a transform */
+.table.table-tight th, .table.table-tight td { padding: 10px 12px; }
 .cell-ellip { display: inline-block; max-width: 160px; overflow: hidden;
               text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
 
