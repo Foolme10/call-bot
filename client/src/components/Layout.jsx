@@ -6,6 +6,7 @@ const tabs = [
   { to: '/library', label: 'Library' },
   { to: '/reports', label: 'Reports' },
   { to: '/monitor', label: 'Live Monitor' },
+  { to: '/delivery', label: 'Delivery Reports' },
 ];
 
 export default function Layout() {

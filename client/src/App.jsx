@@ -7,6 +7,7 @@ import NewCampaign from './pages/NewCampaign.jsx';
 import Library from './pages/Library.jsx';
 import Reports from './pages/Reports.jsx';
 import Monitor from './pages/Monitor.jsx';
+import DeliveryReports from './pages/DeliveryReports.jsx';
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -34,6 +35,7 @@ export default function App() {
         <Route path="library" element={<Library />} />
         <Route path="reports" element={<Reports />} />
         <Route path="monitor" element={<Monitor />} />
+        <Route path="delivery" element={<DeliveryReports />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
