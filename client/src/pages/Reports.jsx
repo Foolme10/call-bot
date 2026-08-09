@@ -180,9 +180,11 @@ export default function Reports() {
                     Listen time
                   </th>
                 )}
-                <th title={`Which attempt this ${isSms ? 'message was sent' : 'call was answered/finished'} on, out of the campaign's max`}>
-                  Attempt
-                </th>
+                {!isSms && (
+                  <th title="Which attempt this call was answered/finished on, out of the campaign's max">
+                    Attempt
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -198,15 +200,17 @@ export default function Reports() {
                   ) : (
                     <td className="muted small">{listenTime(r)}</td>
                   )}
-                  <td>
-                    {r.attempts}
-                    {data.campaign?.max_attempts > 1 ? ` / ${data.campaign.max_attempts}` : ''}
-                  </td>
+                  {!isSms && (
+                    <td>
+                      {r.attempts}
+                      {data.campaign?.max_attempts > 1 ? ` / ${data.campaign.max_attempts}` : ''}
+                    </td>
+                  )}
                 </tr>
               ))}
               {data.rows.length === 0 && (
                 <tr>
-                  <td colSpan="5" className="muted">
+                  <td colSpan={isSms ? 4 : 5} className="muted">
                     No matching {isSms ? 'messages' : 'calls'}.
                   </td>
                 </tr>

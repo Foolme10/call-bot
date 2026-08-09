@@ -281,8 +281,13 @@ export default function Campaigns() {
                   )}
                 </td>
                 <td>
-                  <span className="muted small">up to</span> {c.cps}{' '}
-                  {c.channel === 'sms' ? 'msgs/sec' : 'calls/sec'}
+                  {c.channel === 'sms' ? (
+                    <span className="muted small">—</span>
+                  ) : (
+                    <>
+                      <span className="muted small">up to</span> {c.cps} calls/sec
+                    </>
+                  )}
                 </td>
                 <td>
                   {c.completed}/{c.run_total || c.total_contacts}

@@ -268,9 +268,9 @@ export default function Monitor() {
             {campaignStatus === 'running' ? 'active' : campaignStatus}
           </span>
         )}
-        {selected && (
+        {selected && selected.channel !== 'sms' && (
           <span className="muted small" style={{ alignSelf: 'center' }}>
-            up to {selected.cps} {selected.channel === 'sms' ? 'messages/sec' : 'calls/sec'}
+            up to {selected.cps} calls/sec
           </span>
         )}
       </div>

@@ -708,16 +708,11 @@ export default function NewCampaign() {
       <section className="card">
         <h3>4. {isSms ? 'Sending speed' : 'Dialing speed'}</h3>
         <p className="muted small">
-          Speed is set automatically from your list size so the campaign finishes in a reasonable
-          time, and never goes above the {isSms ? 'gateway' : 'trunk'}’s capacity
           {isSms
-            ? pacing && pacing.sms
-              ? ` (up to ${pacing.sms.maxCps} messages/sec)`
-              : ''
-            : pacing
-            ? ` (up to ${pacing.maxCps} calls/sec)`
-            : ''}
-          . Nothing to configure.
+            ? 'Messages are sent as fast as the gateway accepts them — nothing to configure.'
+            : `Speed is set automatically from your list size so the campaign finishes in a reasonable time, and never goes above the trunk’s capacity${
+                pacing ? ` (up to ${pacing.maxCps} calls/sec)` : ''
+              }. Nothing to configure.`}
         </p>
         {estimate &&
           (contactSource === 'manual'
@@ -734,8 +729,8 @@ export default function NewCampaign() {
                     : existingContacts
                 ).toLocaleString()}
               </strong>{' '}
-              {isSms ? 'recipients' : 'numbers'} → up to <strong>{estimate.cps}</strong>{' '}
-              {isSms ? 'messages/sec' : 'calls/sec'}
+              {isSms ? 'recipients' : 'numbers'}
+              {isSms ? '' : <> → up to <strong>{estimate.cps}</strong> calls/sec</>}
             </div>
             <div className="muted small">
               Estimated time to finish: about{' '}

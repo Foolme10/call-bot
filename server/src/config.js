@@ -77,14 +77,14 @@ function autoPace(totalContacts) {
   return { cps, maxConcurrent, targetMinutes: TARGET_MINUTES, estMinutes };
 }
 
-// Auto-pacing for SMS. No line-holding like voice — throughput is just the send
-// rate (cps), sized from the list to finish near TARGET_MINUTES and clamped to
-// the gateway ceiling. maxConcurrent bounds simultaneous in-flight HTTP sends.
+// Auto-pacing for SMS. Unlike voice there's no line-holding to spread out, so
+// there's nothing to gain by throttling below the gateway's rate — just send at
+// the full configured ceiling (SMS_MAX_CPS). maxConcurrent bounds simultaneous
+// in-flight HTTP sends.
 function smsPace(totalContacts) {
   const n = Math.max(1, Number(totalContacts) || 1);
-  const targetSeconds = TARGET_MINUTES * 60;
-  const cps = Math.min(SMS_MAX_CPS, Math.max(1, Math.ceil(n / targetSeconds)));
-  const maxConcurrent = Math.min(SMS_MAX_CONCURRENT, Math.max(cps * 2, 5), n);
+  const cps = SMS_MAX_CPS;
+  const maxConcurrent = Math.min(SMS_MAX_CONCURRENT, n);
   const estMinutes = Math.max(1, Math.ceil(n / cps / 60));
   return { cps, maxConcurrent, targetMinutes: TARGET_MINUTES, estMinutes };
 }
