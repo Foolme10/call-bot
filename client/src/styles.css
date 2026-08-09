@@ -63,7 +63,7 @@ h3 { margin: 0 0 12px; }
 .tabs a:hover { background: var(--panel-2); color: var(--text); }
 .tabs a.active { background: var(--panel-2); color: var(--text); }
 .user { display: flex; align-items: center; gap: 12px; flex-shrink: 0; white-space: nowrap; }
-.content { padding: 24px; max-width: 1100px; margin: 0 auto; width: 100%; }
+.content { padding: 24px; max-width: 1360px; margin: 0 auto; width: 100%; }
 
 .page-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; gap: 12px; }
 
@@ -159,16 +159,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 .actions-cell { text-align: right; white-space: nowrap; }
 .actions { display: inline-flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
 
-/* Admin campaigns list has an extra Owner column. Instead of cramming it into
-   the 1100px column, let JUST this table use the full screen width (centered)
-   so all columns fit without wrapping or sideways scroll. Everything else on the
-   app keeps the normal 1100px layout. */
-.table-wrap.wide-admin {
-  width: min(1500px, 96vw);
-  margin-left: 50%;
-  transform: translateX(-50%);
-}
-.table-wrap.wide-admin .table th { position: static; } /* sticky misbehaves inside a transform */
+/* Admin campaigns list has an extra Owner column; tighten its padding so all
+   columns fit the shared app width (overflow-x scrolls if a small screen can't). */
 .table.table-tight th, .table.table-tight td { padding: 9px 10px; }
 .cell-ellip { display: inline-block; max-width: 160px; overflow: hidden;
               text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }

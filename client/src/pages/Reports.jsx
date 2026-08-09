@@ -33,6 +33,9 @@ const LEGEND_ORDER = ['answered', 'no_answer', 'busy', 'congestion', 'failed', '
 // so it never lists options that always return zero rows.
 const SMS_STATUSES = ['sent', 'failed', 'queued', 'dialing'];
 const SMS_ONLY = ['sent']; // voice reports should not offer these
+// SMS wording for statuses (the backend labels are voice-oriented, e.g. "Not
+// Dialed" / "Dialing") so an SMS report never shows voice terminology.
+const SMS_LABELS = { sent: 'Sent', failed: 'Failed', queued: 'Not Sent', dialing: 'Sending' };
 
 export default function Reports() {
   const [campaigns, setCampaigns] = useState([]);
@@ -73,6 +76,7 @@ export default function Reports() {
 
   const labels = data?.labels || {};
   const isSms = data?.campaign?.channel === 'sms';
+  const lbl = (k) => (isSms && SMS_LABELS[k]) || labels[k] || k; // SMS-aware status label
   const headline = isSms ? HEADLINE_SMS : HEADLINE;
   const other = isSms ? OTHER_SMS : OTHER;
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
@@ -112,9 +116,9 @@ export default function Reports() {
               <option value="">All statuses</option>
               {Object.entries(labels)
                 .filter(([k]) => (isSms ? SMS_STATUSES.includes(k) : !SMS_ONLY.includes(k)))
-                .map(([k, v]) => (
+                .map(([k]) => (
                   <option key={k} value={k}>
-                    {v}
+                    {lbl(k)}
                   </option>
                 ))}
             </select>
@@ -137,7 +141,7 @@ export default function Reports() {
             {other.filter((k) => data.summary[k]).map((k) => (
               <div key={k} className="summary-card" title={HELP[k] || ''}>
                 <div className="num">{data.summary[k]}</div>
-                <div className="muted small">{labels[k]}</div>
+                <div className="muted small">{lbl(k)}</div>
               </div>
             ))}
           </div>
@@ -193,7 +197,9 @@ export default function Reports() {
                   <td>{r.name || '—'}</td>
                   <td>{r.phone}</td>
                   <td>
-                    <span className={`badge ${statusClass(r.status)}`}>{r.statusLabel}</span>
+                    <span className={`badge ${statusClass(r.status)}`}>
+                      {isSms ? lbl(r.status) : r.statusLabel}
+                    </span>
                   </td>
                   {isSms ? (
                     <td className="muted small">{r.error_detail || '—'}</td>
