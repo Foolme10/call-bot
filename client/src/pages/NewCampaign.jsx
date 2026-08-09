@@ -706,10 +706,10 @@ export default function NewCampaign() {
       )}
 
       <section className="card">
-        <h3>4. {isSms ? 'Sending speed' : 'Dialing speed'}</h3>
+        <h3>4. {isSms ? 'Delivery' : 'Dialing speed'}</h3>
         <p className="muted small">
           {isSms
-            ? 'Messages are sent as fast as the gateway accepts them — nothing to configure.'
+            ? 'Messages are delivered to the SMS gateway as a single bulk broadcast — there’s no pacing to configure.'
             : `Speed is set automatically from your list size so the campaign finishes in a reasonable time, and never goes above the trunk’s capacity${
                 pacing ? ` (up to ${pacing.maxCps} calls/sec)` : ''
               }. Nothing to configure.`}

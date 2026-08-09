@@ -282,7 +282,10 @@ export default function Campaigns() {
                 </td>
                 <td>
                   {c.channel === 'sms' ? (
-                    <span className="muted small">—</span>
+                    <>
+                      {Number(c.total_contacts).toLocaleString()}{' '}
+                      <span className="muted small">recipients</span>
+                    </>
                   ) : (
                     <>
                       <span className="muted small">up to</span> {c.cps} calls/sec
