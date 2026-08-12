@@ -98,7 +98,7 @@ router.get(
     const rows = await db.query(
       `SELECT c.id, c.name, c.channel, c.status, c.intensity_level, c.cps, c.max_concurrent,
               c.schedule_type, c.scheduled_at, c.total_contacts, c.created_at,
-              c.started_at, c.completed_at, c.rerun_scope, c.redial_count,
+              c.started_at, c.completed_at, c.stop_reason, c.rerun_scope, c.redial_count,
               ci.label AS caller_label, ci.number AS caller_number, a.name AS audio_name,
               u.username AS owner,
               COALESCE(s.run_total, 0) AS run_total,
@@ -358,6 +358,7 @@ router.get(
       channel: campaign.channel || 'voice',
       counts: byStatus,
       active,
+      stopReason: campaign.stop_reason || null,
       rerunScope: campaign.rerun_scope || null,
       totalContacts: campaign.total_contacts || 0,
       maxAttempts: campaign.max_attempts || 1,

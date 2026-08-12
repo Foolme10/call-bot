@@ -162,6 +162,16 @@ export default function Reports() {
             </details>
           )}
 
+          {data.campaign?.status === 'stopped' && data.campaign?.stop_reason && (
+            <div
+              className="alert"
+              style={{ background: 'rgba(248,81,73,.12)', color: '#ff7b72', border: '1px solid rgba(248,81,73,.4)', marginBottom: 10 }}
+            >
+              ⏹ <strong>This campaign was auto-stopped.</strong> {data.campaign.stop_reason} Fix the
+              issue, then redial to send the remaining messages.
+            </div>
+          )}
+
           {data.campaign?.rerun_scope && (
             <p className="muted small" style={{ marginBottom: 10 }}>
               ↻ Last run was a <strong>redial</strong> —{' '}

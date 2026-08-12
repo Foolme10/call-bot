@@ -45,6 +45,7 @@ export default function Monitor() {
   const [counts, setCounts] = useState({});
   const [channel, setChannel] = useState('voice');
   const [campaignStatus, setCampaignStatus] = useState('');
+  const [stopReason, setStopReason] = useState(null); // set when a campaign was auto-stopped on gateway errors
   const [rerunScope, setRerunScope] = useState(null); // 'all' | 'unreached' when this run is a redial
   const [retry, setRetry] = useState({ maxAttempts: 1, retryOn: '' }); // per-number auto-retry settings
   const [totalContacts, setTotalContacts] = useState(0); // full list size (for redial "X of Y")
@@ -96,6 +97,7 @@ export default function Monitor() {
         setCounts(d.counts);
         setChannel(d.channel || 'voice');
         setCampaignStatus(d.status);
+        setStopReason(d.stopReason || null);
         // Manual blast we launched here just finished → show the outcome popup once.
         if (
           manualWatch &&
@@ -104,7 +106,12 @@ export default function Monitor() {
           !completionShownRef.current
         ) {
           completionShownRef.current = true;
-          setCompleted({ status: d.status, counts: d.counts || {}, channel: d.channel || 'voice' });
+          setCompleted({
+            status: d.status,
+            counts: d.counts || {},
+            channel: d.channel || 'voice',
+            reason: d.stopReason || null,
+          });
         }
         setRerunScope(d.rerunScope || null);
         setRetry({ maxAttempts: d.maxAttempts || 1, retryOn: d.retryOn || '' });
@@ -169,6 +176,9 @@ export default function Monitor() {
         const m = JSON.parse(ev.data);
         if (m.type === 'campaign') {
           setCampaignStatus(m.status);
+          // Gateway auto-stop carries a reason — surface it immediately.
+          if (m.reason) setStopReason(m.reason);
+          else if (m.status === 'running') setStopReason(null);
           return;
         }
         if (m.type !== 'call') return;
@@ -279,6 +289,16 @@ export default function Monitor() {
         <div className="empty">Select a campaign to watch it dial in real time.</div>
       ) : (
         <>
+          {campaignStatus === 'stopped' && stopReason && (
+            <div
+              className="alert"
+              style={{ background: 'rgba(248,81,73,.12)', color: '#ff7b72', border: '1px solid rgba(248,81,73,.4)' }}
+            >
+              ⏹ <strong>Campaign auto-stopped.</strong> {stopReason} Fix the issue, then redial from the
+              Campaigns page to resume the remaining messages.
+            </div>
+          )}
+
           {rerunScope && (
             <div
               className="alert"
@@ -442,6 +462,21 @@ export default function Monitor() {
                 {smsDone ? 'SMS' : 'Voice'} blast · {total.toLocaleString()}{' '}
                 {smsDone ? (total === 1 ? 'recipient' : 'recipients') : total === 1 ? 'number' : 'numbers'}
               </p>
+              {stopped && completed.reason && (
+                <p
+                  style={{
+                    color: '#ff7b72',
+                    background: 'rgba(248,81,73,.1)',
+                    border: '1px solid rgba(248,81,73,.35)',
+                    borderRadius: 6,
+                    padding: '8px 10px',
+                    margin: '4px 0 8px',
+                    fontSize: 13,
+                  }}
+                >
+                  {completed.reason}
+                </p>
+              )}
               <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', margin: '10px 0 4px' }}>
                 {stats.map(([label, val, cls]) => (
                   <div key={label}>

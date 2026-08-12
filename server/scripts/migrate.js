@@ -101,6 +101,9 @@ async function main() {
   await ensureColumn('call_logs', 'error_detail', 'error_detail VARCHAR(255) NULL AFTER hangup_cause');
   await ensureColumn('call_logs', 'provider_msgid', 'provider_msgid VARCHAR(64) NULL AFTER error_detail');
   await ensureIndex('call_logs', 'idx_calllogs_msgid', 'KEY idx_calllogs_msgid (provider_msgid)');
+  // Why a campaign was auto-stopped (e.g. the SMS gateway rejected the account
+  // or failed too many sends in a row). NULL for normal stops/completions.
+  await ensureColumn('campaigns', 'stop_reason', 'stop_reason VARCHAR(255) NULL AFTER completed_at');
   if (!(await enumHasValue('call_logs', 'status', 'sent'))) {
     await conn.query(
       `ALTER TABLE \`call_logs\` MODIFY COLUMN status

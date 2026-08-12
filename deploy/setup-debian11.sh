@@ -294,6 +294,9 @@ SMS_PREFIX_LABEL=
 # Prepended to EVERY outgoing SMS (compliance identifier). "DCA:" by default;
 # set empty to disable. A trailing space is added automatically.
 SMS_PREPEND=DCA:
+# Safety brake: auto-stop a running SMS campaign after this many gateway
+# failures in a row (bad auth key / no credit stop it immediately). 0 = off.
+SMS_AUTOSTOP_FAILURES=10
 
 AUDIO_DIR=$AUDIO_DIR
 UPLOAD_TMP_DIR=$APP_DIR/server/uploads/tmp

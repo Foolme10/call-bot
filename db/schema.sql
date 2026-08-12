@@ -99,6 +99,9 @@ CREATE TABLE IF NOT EXISTS campaigns (
   created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   started_at      DATETIME NULL,
   completed_at    DATETIME NULL,
+  -- Why a campaign was auto-stopped (e.g. the SMS gateway rejected the account
+  -- or failed too many sends in a row). NULL for normal stops/completions.
+  stop_reason     VARCHAR(255) NULL,
   PRIMARY KEY (id),
   KEY idx_campaigns_user (user_id),
   KEY idx_campaigns_status (status),

@@ -71,11 +71,19 @@ class SmsRunner {
     this.running = false;
     this.timer = null;
     this._busy = false;
+    // Safety brake: count gateway failures in a row so a systemic problem
+    // (gateway down, repeated timeouts) auto-stops the campaign. Reset on any
+    // successful send. `aborted` guards abortCampaign() so it fires once.
+    this.autoStopThreshold = config.sms.autoStopFailures;
+    this.consecutiveFailures = 0;
+    this.aborted = false;
   }
 
   start() {
     if (this.running) return;
     this.running = true;
+    this.aborted = false;
+    this.consecutiveFailures = 0;
     this.tokens = 0;
     this.timer = setInterval(() => this.pump(), TICK_MS);
     logger.info(`SMS campaign ${this.id} runner started (cps=${this.cps}, max=${this.maxConcurrent})`);
@@ -201,6 +209,7 @@ class SmsRunner {
       // reset the row to 'queued', the write matches nothing (affectedRows 0)
       // and we skip it — the new run owns that recipient now.
       if (result.ok) {
+        this.consecutiveFailures = 0; // a good send clears the safety brake
         const r = await db.execute(
           `UPDATE call_logs
               SET status = 'sent', hangup_cause = :code, provider_msgid = :msgid, error_detail = NULL,
@@ -213,7 +222,37 @@ class SmsRunner {
         return;
       }
 
-      // Failed. Retry only transient errors, within limits.
+      // Failed. Feed the auto-stop safety brake: an account-level error (bad
+      // auth key / no credit) dooms every send, so stop the campaign at once;
+      // other systemic errors stop it once they pile up N in a row. Only the
+      // live runner for this campaign can trigger the stop (guards against a
+      // stale send from a stopped/rerun run tripping the new one).
+      this.consecutiveFailures += 1;
+      const fatal = smsProvider.isFatal(result.code);
+      const tooMany =
+        this.autoStopThreshold > 0 && this.consecutiveFailures >= this.autoStopThreshold;
+      if (!this.aborted && this.running && runners.get(this.id) === this && (fatal || tooMany)) {
+        this.aborted = true;
+        this.pause(); // stop the pump at once so no further sends fire mid-abort
+        const rr = await db.execute(
+          `UPDATE call_logs
+              SET status = 'failed', hangup_cause = :code, error_detail = :detail,
+                  end_time = UTC_TIMESTAMP(),
+                  duration_sec = TIMESTAMPDIFF(SECOND, dial_start, UTC_TIMESTAMP())
+            WHERE id = :id AND status = 'dialing'`,
+          { code: result.code, detail: result.detail, id: row.id }
+        );
+        if (rr.affectedRows > 0) this.publishOutcome(row, 'failed', attempt);
+        const reason = fatal
+          ? `SMS gateway rejected the account — ${result.detail}. Campaign auto-stopped.`
+          : `SMS gateway failed ${this.consecutiveFailures} sends in a row (last error: ${result.detail}). Campaign auto-stopped.`;
+        abortCampaign(this.id, reason).catch((e) =>
+          logger.error(`SMS auto-stop ${this.id} failed:`, e.message)
+        );
+        return;
+      }
+
+      // Retry only transient errors, within limits.
       if (shouldRetry(result.code, attempt, this.maxAttempts, this.retryOn, totalDials, this.maxTotalDials)) {
         const r = await db.execute(
           `UPDATE call_logs
@@ -297,7 +336,8 @@ async function startCampaign(campaignId) {
   await ensureSendLogs(campaignId);
   await db.execute(
     `UPDATE campaigns
-        SET status = 'running', started_at = COALESCE(started_at, UTC_TIMESTAMP())
+        SET status = 'running', stop_reason = NULL,
+            started_at = COALESCE(started_at, UTC_TIMESTAMP())
       WHERE id = :id`,
     { id: campaignId }
   );
@@ -395,6 +435,24 @@ async function stopCampaign(campaignId) {
     { id: campaignId }
   );
   monitor.publish(campaignId, { type: 'campaign', status: 'stopped' });
+}
+
+// Stop a running campaign because the gateway is systemically failing (auth
+// rejected, no credit, or too many errors in a row). Like stopCampaign but it
+// records WHY, so the user sees the reason in the UI and knows to act.
+async function abortCampaign(campaignId, reason) {
+  const runner = runners.get(campaignId);
+  if (runner) {
+    runner.pause();
+    runners.delete(campaignId);
+  }
+  const msg = String(reason || 'Gateway error').slice(0, 255);
+  await db.execute(
+    "UPDATE campaigns SET status = 'stopped', stop_reason = :reason, completed_at = UTC_TIMESTAMP() WHERE id = :id",
+    { reason: msg, id: campaignId }
+  );
+  monitor.publish(campaignId, { type: 'campaign', status: 'stopped', reason: msg });
+  logger.warn(`SMS campaign ${campaignId} auto-stopped: ${msg}`);
 }
 
 async function finalizeCampaign(campaignId, status) {

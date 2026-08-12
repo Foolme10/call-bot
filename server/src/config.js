@@ -32,6 +32,14 @@ const MAX_TOTAL_DIALS = Math.max(0, Number(process.env.MAX_TOTAL_DIALS || 0));
 const SMS_MAX_CPS = Math.max(1, Number(process.env.SMS_MAX_CPS || 10));
 const SMS_MAX_CONCURRENT = Math.max(1, Number(process.env.SMS_MAX_CONCURRENT || 20));
 
+// Safety brake: if the gateway keeps rejecting sends while a campaign runs,
+// auto-stop the whole campaign instead of burning through the list. Some
+// errors (bad auth key, no credit) stop it immediately; other systemic errors
+// (gateway down, timeouts) stop it after this many failures in a row. Set
+// SMS_AUTOSTOP_FAILURES=0 to disable the consecutive-failure brake (the
+// immediate auth/credit stop still applies).
+const SMS_AUTOSTOP_FAILURES = Math.max(0, Number(process.env.SMS_AUTOSTOP_FAILURES || 10));
+
 // Text the app prepends to EVERY outgoing SMS (a compliance identifier, e.g. a
 // debt-collection agency tag). Defaults to "DCA:" when unset; set SMS_PREPEND=
 // (empty) to disable. A single trailing space is ensured so it doesn't run into
@@ -156,6 +164,8 @@ const config = {
     prefixLabel: process.env.SMS_PREFIX_LABEL || '',
     // Prepended to every message the app sends (default "DCA: ").
     prepend: SMS_PREPEND,
+    // Consecutive gateway failures that auto-stop a running campaign (0 = off).
+    autoStopFailures: SMS_AUTOSTOP_FAILURES,
   },
 
   storage: {

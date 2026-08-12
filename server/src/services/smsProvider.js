@@ -47,6 +47,14 @@ function isTransient(code) {
   return code === -9999 || code === null;
 }
 
+// Account-level errors that doom EVERY send in the campaign, not just this one
+// recipient: a bad/rejected auth key (0) or an exhausted prepaid balance (-2).
+// When one of these comes back mid-run there's no point continuing — the whole
+// campaign is auto-stopped immediately so the operator can fix the account.
+function isFatal(code) {
+  return code === 0 || code === -2;
+}
+
 // Send one SMS. Never throws — always resolves to a normalized result:
 //   { ok, code, msgid, detail }  where ok === (code === 1). `msgid` is the
 //   gateway's message id (nxsip), kept for matching later delivery reports.
@@ -117,4 +125,4 @@ async function sendSms({ to, content }) {
   }
 }
 
-module.exports = { sendSms, isTransient, CODE_MEANING };
+module.exports = { sendSms, isTransient, isFatal, CODE_MEANING };
