@@ -97,6 +97,8 @@ export default function DeliveryReports() {
 
   const s = data?.summary;
   const deliveryRate = s && s.sent > 0 ? Math.round((s.delivered / s.sent) * 100) : 0;
+  const creditPrice = data?.creditPrice ?? 0.15;
+  const cost = s ? s.credits * creditPrice : 0;
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
 
   return (
@@ -168,6 +170,12 @@ export default function DeliveryReports() {
               <div className="summary-card">
                 <div className="num">{s.credits.toLocaleString()}</div>
                 <div className="muted small">Credits used</div>
+              </div>
+            )}
+            {s.credits > 0 && (
+              <div className="summary-card">
+                <div className="num">RM {cost.toFixed(2)}</div>
+                <div className="muted small">Cost (@ RM {creditPrice.toFixed(2)}/credit)</div>
               </div>
             )}
           </div>

@@ -144,6 +144,15 @@ export default function Reports() {
                 <div className="muted small">{lbl(k)}</div>
               </div>
             ))}
+            {isSms && data.sms && data.sms.credits > 0 && (
+              <div
+                className="summary-card"
+                title={`${data.sms.credits.toLocaleString()} credits @ RM ${data.sms.creditPrice.toFixed(2)} each`}
+              >
+                <div className="num">RM {(data.sms.credits * data.sms.creditPrice).toFixed(2)}</div>
+                <div className="muted small">Cost ({data.sms.credits.toLocaleString()} credits)</div>
+              </div>
+            )}
           </div>
 
           {!isSms && (

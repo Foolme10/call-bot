@@ -90,9 +90,20 @@ router.get(
     const summary = {};
     summaryRows.forEach((r) => (summary[r.status] = Number(r.n)));
 
+    // SMS billing: credits consumed (from delivery reports) × price per credit.
+    let sms = null;
+    if (campaign.channel === 'sms') {
+      const [{ credits }] = await db.query(
+        "SELECT COALESCE(SUM(dlr_credits), 0) AS credits FROM call_logs WHERE campaign_id = :id AND status = 'sent'",
+        { id: campaign.id }
+      );
+      sms = { credits: Number(credits), creditPrice: config.sms.creditPrice };
+    }
+
     res.json({
       campaign,
       summary,
+      sms,
       labels: STATUS_LABEL,
       maxTotalDials: config.calls.maxTotalDials,
       page,
@@ -248,6 +259,7 @@ router.get(
       campaign: { id: campaign.id, name: campaign.name, channel: campaign.channel, status: campaign.status },
       summary: await dlrSummary(campaign.id),
       pollSeconds: config.sms.dlrPollSeconds,
+      creditPrice: config.sms.creditPrice,
       page,
       pageSize,
       total: Number(filteredTotal),

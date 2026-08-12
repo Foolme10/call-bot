@@ -173,6 +173,9 @@ SMS_AUTOSTOP_FAILURES=10
 SMS_DLR_POLL_SECONDS=120
 SMS_DLR_BATCH=100
 SMS_DLR_MAX_AGE_HOURS=48
+# Price of one SMS credit in Ringgit (1 credit = 1 message segment). Used to
+# show each campaign's cost. Adjust to this customer's rate.
+SMS_CREDIT_PRICE=0.15
 
 AUDIO_DIR=$AUDIO_DIR
 UPLOAD_TMP_DIR=$APP_DIR/server/uploads/tmp

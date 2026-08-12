@@ -49,6 +49,10 @@ const SMS_DLR_POLL_SECONDS = Math.max(0, Number(process.env.SMS_DLR_POLL_SECONDS
 const SMS_DLR_BATCH = Math.max(1, Number(process.env.SMS_DLR_BATCH || 100));
 const SMS_DLR_MAX_AGE_HOURS = Math.max(1, Number(process.env.SMS_DLR_MAX_AGE_HOURS || 48));
 
+// Price of one SMS credit, in Ringgit (RM). The gateway charges 1 credit per
+// message segment; a campaign's cost is (credits used × this). Default RM 0.15.
+const SMS_CREDIT_PRICE = Math.max(0, Number(process.env.SMS_CREDIT_PRICE || 0.15));
+
 // Text the app prepends to EVERY outgoing SMS (a compliance identifier, e.g. a
 // debt-collection agency tag). Defaults to "DCA:" when unset; set SMS_PREPEND=
 // (empty) to disable. A single trailing space is ensured so it doesn't run into
@@ -179,6 +183,8 @@ const config = {
     dlrPollSeconds: SMS_DLR_POLL_SECONDS,
     dlrBatch: SMS_DLR_BATCH,
     dlrMaxAgeHours: SMS_DLR_MAX_AGE_HOURS,
+    // RM per SMS credit (1 credit = 1 segment). For campaign cost display.
+    creditPrice: SMS_CREDIT_PRICE,
   },
 
   storage: {
