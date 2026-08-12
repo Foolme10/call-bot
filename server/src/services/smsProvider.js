@@ -125,4 +125,86 @@ async function sendSms({ to, content }) {
   }
 }
 
-module.exports = { sendSms, isTransient, isFatal, CODE_MEANING };
+// ───────────────────────────────────────────────────────────────────────────
+// Delivery reports (DLR).
+//
+//   POST {SMS_API_URL}get-dlr.php   body: {"auth-key":KEY,"msgid":["NX…", …]}
+//
+// Response: {"status":1,"messages":[{msgid,to,state,state_id,reason,
+//   reason_text,segments,submitted_at,updated_at,credits}, …]}. `state` is the
+// gateway's word for where the message ended up; we fold it into three buckets
+// the UI understands: delivered / failed / pending (still in flight).
+// ───────────────────────────────────────────────────────────────────────────
+
+// Map a raw gateway state to our bucket. Anything terminal-and-good is
+// 'delivered'; anything terminal-and-bad is 'failed'; everything else is still
+// 'pending' and worth polling again. Unknown states default to 'pending' so we
+// keep watching rather than wrongly calling a message failed.
+const DLR_DELIVERED = new Set(['delivered', 'delivrd']);
+const DLR_FAILED = new Set([
+  'undelivered', 'undeliverable', 'failed', 'rejected', 'expired', 'deleted', 'error', 'undeliv',
+]);
+function dlrBucket(state) {
+  const s = String(state || '').trim().toLowerCase();
+  if (DLR_DELIVERED.has(s)) return 'delivered';
+  if (DLR_FAILED.has(s)) return 'failed';
+  return 'pending';
+}
+
+// Fetch delivery reports for a batch of msgids. Never throws — resolves to
+//   { ok, detail, messages: [{ msgid, state, bucket, detail, credits, updatedAt, to }] }
+// `ok:false` means the whole request failed (network/HTTP/parse); callers should
+// leave those messages as-is and try again next poll.
+async function fetchDlr(msgids) {
+  const ids = (Array.isArray(msgids) ? msgids : []).filter(Boolean);
+  if (!config.sms.authKey) return { ok: false, detail: 'SMS gateway not configured', messages: [] };
+  if (ids.length === 0) return { ok: true, detail: null, messages: [] };
+
+  let endpoint;
+  try {
+    endpoint = new URL('get-dlr.php', config.sms.apiUrl);
+  } catch (_e) {
+    return { ok: false, detail: `Invalid SMS_API_URL: ${config.sms.apiUrl}`, messages: [] };
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), config.sms.requestTimeout * 1000);
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 'auth-key': config.sms.authKey, msgid: ids }),
+      signal: controller.signal,
+    });
+    const raw = (await res.text()).trim();
+    if (!res.ok) return { ok: false, detail: `HTTP ${res.status} from DLR endpoint`, messages: [] };
+
+    let j;
+    try {
+      j = JSON.parse(raw);
+    } catch (_e) {
+      return { ok: false, detail: redact(`Unexpected DLR response: ${raw.slice(0, 120) || '(empty)'}`), messages: [] };
+    }
+    const list = Array.isArray(j.messages) ? j.messages : [];
+    const messages = list
+      .filter((m) => m && m.msgid)
+      .map((m) => ({
+        msgid: String(m.msgid),
+        state: m.state != null ? String(m.state) : null,
+        bucket: dlrBucket(m.state),
+        detail: m.reason_text ? redact(String(m.reason_text)) : m.reason ? redact(String(m.reason)) : null,
+        credits: m.credits != null && !Number.isNaN(Number(m.credits)) ? Number(m.credits) : null,
+        updatedAt: m.updated_at || m.updatedAt || null,
+        to: m.to || null,
+      }));
+    return { ok: true, detail: null, messages };
+  } catch (err) {
+    const detail = err.name === 'AbortError' ? 'DLR request timed out' : `Network error: ${err.message}`;
+    logger.warn(`SMS DLR fetch failed: ${detail}`);
+    return { ok: false, detail: redact(detail), messages: [] };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+module.exports = { sendSms, isTransient, isFatal, fetchDlr, dlrBucket, CODE_MEANING };

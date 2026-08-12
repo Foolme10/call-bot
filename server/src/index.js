@@ -20,6 +20,7 @@ const smsTemplateRoutes = require('./routes/smsTemplates');
 
 const dialer = require('./services/dialer');
 const smsSender = require('./services/smsSender');
+const dlrPoller = require('./services/dlrPoller');
 const monitor = require('./ws/monitor');
 
 const app = express();
@@ -78,6 +79,9 @@ async function start() {
   // even when telephony is down. Non-fatal on failure.
   smsSender.start().catch((e) => logger.error('SMS sender failed to start:', e.message));
 
+  // Poll the gateway for SMS delivery reports (DLR). Independent + non-fatal.
+  dlrPoller.start();
+
   server.listen(config.port, () => {
     logger.info(`call-bot API listening on :${config.port} (${config.env})`);
   });
@@ -87,6 +91,7 @@ function shutdown(signal) {
   logger.info(`${signal} received, shutting down…`);
   dialer.stop();
   smsSender.stop();
+  dlrPoller.stop();
   server.close(() => {
     db.pool.end().finally(() => process.exit(0));
   });

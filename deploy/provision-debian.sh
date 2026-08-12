@@ -167,6 +167,12 @@ SMS_PREPEND=DCA:
 # Safety brake: auto-stop a running SMS campaign after this many gateway
 # failures in a row (bad auth key / no credit stop it immediately). 0 = off.
 SMS_AUTOSTOP_FAILURES=10
+# Delivery-report (DLR) polling: how often to ask the gateway whether each sent
+# message reached the handset, how many to check per request, and how long to
+# keep chasing a message before giving up. Set SMS_DLR_POLL_SECONDS=0 to disable.
+SMS_DLR_POLL_SECONDS=120
+SMS_DLR_BATCH=100
+SMS_DLR_MAX_AGE_HOURS=48
 
 AUDIO_DIR=$AUDIO_DIR
 UPLOAD_TMP_DIR=$APP_DIR/server/uploads/tmp

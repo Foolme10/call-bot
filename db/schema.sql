@@ -146,6 +146,14 @@ CREATE TABLE IF NOT EXISTS call_logs (
   hangup_cause  INT NULL,          -- voice: Q.850 code; SMS: raw gateway status code
   error_detail  VARCHAR(255) NULL, -- SMS: human-readable failure reason (e.g. "Insufficient credit")
   provider_msgid VARCHAR(64) NULL, -- SMS: gateway message id, for matching delivery reports later
+  -- SMS delivery report (DLR): filled in later by polling the gateway's get-dlr
+  -- endpoint. 'sent' only means the gateway accepted the message; these say
+  -- whether it actually reached the handset.
+  dlr_status    VARCHAR(16) NULL,  -- normalized bucket: pending / delivered / failed
+  dlr_state     VARCHAR(32) NULL,  -- raw gateway state (delivered/undelivered/expired/rejected/…)
+  dlr_detail    VARCHAR(255) NULL, -- gateway reason_text (e.g. "Delivered to the handset.")
+  dlr_credits   SMALLINT UNSIGNED NULL, -- credits the gateway charged for this message
+  dlr_updated_at DATETIME NULL,    -- gateway's last state-change time for this message
   channel       VARCHAR(128) NULL,            -- Asterisk channel id, for live monitor
   attempts      TINYINT UNSIGNED NOT NULL DEFAULT 0,
   next_attempt_at DATETIME NULL,              -- when a requeued retry becomes eligible to dial
@@ -161,6 +169,7 @@ CREATE TABLE IF NOT EXISTS call_logs (
   KEY idx_calllogs_queue (campaign_id, status, next_attempt_at),  -- retry-aware dial queue
   KEY idx_calllogs_channel (channel),
   KEY idx_calllogs_msgid (provider_msgid),
+  KEY idx_calllogs_dlr (dlr_status, end_time),  -- the DLR poller's work queue
   CONSTRAINT fk_calllogs_campaign FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE,
   CONSTRAINT fk_calllogs_contact  FOREIGN KEY (contact_id)  REFERENCES contacts(id)  ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -40,6 +40,15 @@ const SMS_MAX_CONCURRENT = Math.max(1, Number(process.env.SMS_MAX_CONCURRENT || 
 // immediate auth/credit stop still applies).
 const SMS_AUTOSTOP_FAILURES = Math.max(0, Number(process.env.SMS_AUTOSTOP_FAILURES || 10));
 
+// Delivery-report (DLR) polling. After a message is accepted ('sent') we ask
+// the gateway's get-dlr endpoint whether it actually reached the handset. The
+// poller runs every SMS_DLR_POLL_SECONDS, fetching up to SMS_DLR_BATCH msgids
+// per request, and stops chasing a message once it's older than
+// SMS_DLR_MAX_AGE_HOURS (carriers stop updating stale reports). 0 poll = off.
+const SMS_DLR_POLL_SECONDS = Math.max(0, Number(process.env.SMS_DLR_POLL_SECONDS || 120));
+const SMS_DLR_BATCH = Math.max(1, Number(process.env.SMS_DLR_BATCH || 100));
+const SMS_DLR_MAX_AGE_HOURS = Math.max(1, Number(process.env.SMS_DLR_MAX_AGE_HOURS || 48));
+
 // Text the app prepends to EVERY outgoing SMS (a compliance identifier, e.g. a
 // debt-collection agency tag). Defaults to "DCA:" when unset; set SMS_PREPEND=
 // (empty) to disable. A single trailing space is ensured so it doesn't run into
@@ -166,6 +175,10 @@ const config = {
     prepend: SMS_PREPEND,
     // Consecutive gateway failures that auto-stop a running campaign (0 = off).
     autoStopFailures: SMS_AUTOSTOP_FAILURES,
+    // Delivery-report polling.
+    dlrPollSeconds: SMS_DLR_POLL_SECONDS,
+    dlrBatch: SMS_DLR_BATCH,
+    dlrMaxAgeHours: SMS_DLR_MAX_AGE_HOURS,
   },
 
   storage: {

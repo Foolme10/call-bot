@@ -193,6 +193,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 /* Alerts */
 .alert { padding: 10px 14px; border-radius: 6px; margin-bottom: 14px; }
 .alert.error { background: rgba(248,81,73,.12); color: #ff7b72; border: 1px solid rgba(248,81,73,.3); }
+.alert.info { background: rgba(88,166,255,.12); color: #79c0ff; border: 1px solid rgba(88,166,255,.3); }
 .empty { padding: 40px; text-align: center; color: var(--muted); border: 1px dashed var(--border); border-radius: 10px; }
 
 /* Intensity selector */

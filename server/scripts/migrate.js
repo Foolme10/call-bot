@@ -104,6 +104,15 @@ async function main() {
   // Why a campaign was auto-stopped (e.g. the SMS gateway rejected the account
   // or failed too many sends in a row). NULL for normal stops/completions.
   await ensureColumn('campaigns', 'stop_reason', 'stop_reason VARCHAR(255) NULL AFTER completed_at');
+
+  // SMS delivery reports (DLR): populated later by polling the gateway. 'sent'
+  // only means accepted; these say whether it reached the handset.
+  await ensureColumn('call_logs', 'dlr_status', 'dlr_status VARCHAR(16) NULL AFTER provider_msgid');
+  await ensureColumn('call_logs', 'dlr_state', 'dlr_state VARCHAR(32) NULL AFTER dlr_status');
+  await ensureColumn('call_logs', 'dlr_detail', 'dlr_detail VARCHAR(255) NULL AFTER dlr_state');
+  await ensureColumn('call_logs', 'dlr_credits', 'dlr_credits SMALLINT UNSIGNED NULL AFTER dlr_detail');
+  await ensureColumn('call_logs', 'dlr_updated_at', 'dlr_updated_at DATETIME NULL AFTER dlr_credits');
+  await ensureIndex('call_logs', 'idx_calllogs_dlr', 'KEY idx_calllogs_dlr (dlr_status, end_time)');
   if (!(await enumHasValue('call_logs', 'status', 'sent'))) {
     await conn.query(
       `ALTER TABLE \`call_logs\` MODIFY COLUMN status
