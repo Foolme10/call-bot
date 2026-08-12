@@ -90,14 +90,20 @@ router.get(
     const summary = {};
     summaryRows.forEach((r) => (summary[r.status] = Number(r.n)));
 
-    // SMS billing: credits consumed (from delivery reports) × price per credit.
+    // SMS billing: credits consumed (from delivery reports). The RM price per
+    // credit is admin-only (it's the reseller's rate) — regular users see just
+    // the credit count, never the Ringgit cost, so the price never leaves the
+    // server for a non-admin.
     let sms = null;
     if (campaign.channel === 'sms') {
       const [{ credits }] = await db.query(
         "SELECT COALESCE(SUM(dlr_credits), 0) AS credits FROM call_logs WHERE campaign_id = :id AND status = 'sent'",
         { id: campaign.id }
       );
-      sms = { credits: Number(credits), creditPrice: config.sms.creditPrice };
+      sms = {
+        credits: Number(credits),
+        creditPrice: req.user.role === 'admin' ? config.sms.creditPrice : null,
+      };
     }
 
     res.json({
@@ -259,7 +265,8 @@ router.get(
       campaign: { id: campaign.id, name: campaign.name, channel: campaign.channel, status: campaign.status },
       summary: await dlrSummary(campaign.id),
       pollSeconds: config.sms.dlrPollSeconds,
-      creditPrice: config.sms.creditPrice,
+      // Admin-only: the RM price per credit (reseller rate). Users see credits.
+      creditPrice: req.user.role === 'admin' ? config.sms.creditPrice : null,
       page,
       pageSize,
       total: Number(filteredTotal),

@@ -145,13 +145,22 @@ export default function Reports() {
               </div>
             ))}
             {isSms && data.sms && data.sms.credits > 0 && (
-              <div
-                className="summary-card"
-                title={`${data.sms.credits.toLocaleString()} credits @ RM ${data.sms.creditPrice.toFixed(2)} each`}
-              >
-                <div className="num">RM {(data.sms.credits * data.sms.creditPrice).toFixed(2)}</div>
-                <div className="muted small">Cost ({data.sms.credits.toLocaleString()} credits)</div>
-              </div>
+              data.sms.creditPrice != null ? (
+                // Admin: the Ringgit cost (reseller rate).
+                <div
+                  className="summary-card"
+                  title={`${data.sms.credits.toLocaleString()} credits @ RM ${data.sms.creditPrice.toFixed(2)} each`}
+                >
+                  <div className="num">RM {(data.sms.credits * data.sms.creditPrice).toFixed(2)}</div>
+                  <div className="muted small">Cost ({data.sms.credits.toLocaleString()} credits)</div>
+                </div>
+              ) : (
+                // Regular user: credits consumed, no Ringgit amount.
+                <div className="summary-card">
+                  <div className="num">{data.sms.credits.toLocaleString()}</div>
+                  <div className="muted small">Credits used</div>
+                </div>
+              )
             )}
           </div>
 
