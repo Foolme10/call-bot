@@ -27,6 +27,13 @@ const GLOBAL_MAX_CONCURRENT = Math.max(
 // primary guard. Set MAX_TOTAL_DIALS>0 in .env to also cap per number.
 const MAX_TOTAL_DIALS = Math.max(0, Number(process.env.MAX_TOTAL_DIALS || 0));
 
+// Voice call billing (admin-only cost display). Carriers bill answered calls in
+// fixed time blocks: each started block of VOICE_BLOCK_SECONDS costs
+// VOICE_PRICE_PER_BLOCK_SEN sen, rounded UP per call. Default: 0.7 sen / 10 s.
+// Only answered calls (talk time) are charged.
+const VOICE_BLOCK_SECONDS = Math.max(1, Number(process.env.VOICE_BLOCK_SECONDS || 10));
+const VOICE_PRICE_PER_BLOCK_SEN = Math.max(0, Number(process.env.VOICE_PRICE_PER_BLOCK_SEN || 0.7));
+
 // SMS gateway (nxsip) pacing ceilings. SMS sends are quick HTTP GETs, so the
 // only limits are how fast we fire requests (cps) and how many stay in flight.
 const SMS_MAX_CPS = Math.max(1, Number(process.env.SMS_MAX_CPS || 10));
@@ -154,6 +161,13 @@ const config = {
     maxCps: MAX_CPS,
     maxTotalDials: MAX_TOTAL_DIALS,
     globalMaxConcurrent: GLOBAL_MAX_CONCURRENT,
+  },
+
+  // Voice call block-billing (admin-only cost display).
+  voice: {
+    blockSeconds: VOICE_BLOCK_SECONDS,
+    pricePerBlockSen: VOICE_PRICE_PER_BLOCK_SEN,
+    pricePerBlock: VOICE_PRICE_PER_BLOCK_SEN / 100, // RM per block
   },
 
   sms: {

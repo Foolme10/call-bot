@@ -307,6 +307,11 @@ SMS_DLR_MAX_AGE_HOURS=48
 # show each campaign's cost. Adjust to this customer's rate.
 SMS_CREDIT_PRICE=0.15
 
+# Voice call billing (admin-only cost display): answered calls are billed in
+# fixed time blocks, rounded up per call. Default 0.7 sen per 10-second block.
+VOICE_BLOCK_SECONDS=10
+VOICE_PRICE_PER_BLOCK_SEN=0.7
+
 AUDIO_DIR=$AUDIO_DIR
 UPLOAD_TMP_DIR=$APP_DIR/server/uploads/tmp
 FFMPEG_PATH=ffmpeg

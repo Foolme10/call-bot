@@ -106,10 +106,32 @@ router.get(
       };
     }
 
+    // Voice call cost (admin-only): answered calls billed in fixed time blocks,
+    // rounded up per call. blockSeconds/pricePerBlock let the UI show per-call
+    // cost too; `cost` is the campaign total. Hidden entirely from non-admins.
+    let voice = null;
+    if (campaign.channel !== 'sms' && req.user.role === 'admin') {
+      const block = config.voice.blockSeconds;
+      const [{ blocks }] = await db.query(
+        `SELECT COALESCE(SUM(CEIL(duration_sec / :block)), 0) AS blocks
+           FROM call_logs
+          WHERE campaign_id = :id AND answer_time IS NOT NULL AND duration_sec > 0`,
+        { id: campaign.id, block }
+      );
+      voice = {
+        blockSeconds: block,
+        pricePerBlock: config.voice.pricePerBlock,
+        pricePerBlockSen: config.voice.pricePerBlockSen,
+        blocks: Number(blocks),
+        cost: Number(blocks) * config.voice.pricePerBlock,
+      };
+    }
+
     res.json({
       campaign,
       summary,
       sms,
+      voice,
       labels: STATUS_LABEL,
       maxTotalDials: config.calls.maxTotalDials,
       page,
@@ -139,11 +161,15 @@ router.get(
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const isSms = campaign.channel === 'sms';
+    // Voice cost column is admin-only (reseller rate), same as the on-screen report.
+    const showVoiceCost = !isSms && req.user.role === 'admin';
+    const block = config.voice.blockSeconds;
+    const pricePerBlock = config.voice.pricePerBlock;
     // SMS reports carry the delivery-report columns; voice reports don't.
     res.write(
       isSms
         ? 'Name,Number,Status,Detail,Message ID,Delivery,Delivery Detail,Credits,Delivered/Updated At\n'
-        : 'Name,Number,Status,Detail,Message ID,Attempts,Duration (s),Dialed At,Answered At,Ended At\n'
+        : `Name,Number,Status,Detail,Message ID,Attempts,Duration (s),Dialed At,Answered At,Ended At${showVoiceCost ? ',Cost (RM)' : ''}\n`
     );
 
     // Keyset pagination keeps memory flat for very large lists.
@@ -183,6 +209,15 @@ router.get(
               esc(r.dial_start),
               esc(r.answer_time),
               esc(r.end_time),
+              ...(showVoiceCost
+                ? [
+                    esc(
+                      r.answer_time && r.duration_sec > 0
+                        ? (Math.ceil(r.duration_sec / block) * pricePerBlock).toFixed(3)
+                        : '0.000'
+                    ),
+                  ]
+                : []),
             ];
         res.write(cols.join(',') + '\n');
       }
