@@ -143,6 +143,7 @@ async function sendSms({ to, content }) {
 const DLR_DELIVERED = new Set(['delivered', 'delivrd']);
 const DLR_FAILED = new Set([
   'undelivered', 'undeliverable', 'failed', 'rejected', 'expired', 'deleted', 'error', 'undeliv',
+  'invalid', // nxsip: invalid/unroutable destination number — a permanent failure
 ]);
 function dlrBucket(state) {
   const s = String(state || '').trim().toLowerCase();
