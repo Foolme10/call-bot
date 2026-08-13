@@ -206,6 +206,7 @@ export default function DeliveryReports() {
                   <th>Name</th>
                   <th>Number</th>
                   <th>Delivery</th>
+                  <th title="How many SMS credits this message used (1 credit = 1 segment)">Credits</th>
                   <th>Detail</th>
                   <th>Message ID</th>
                   <th>Updated</th>
@@ -221,6 +222,7 @@ export default function DeliveryReports() {
                         {DLR_LABEL[r.dlr_status] || r.dlr_status}
                       </span>
                     </td>
+                    <td>{r.dlr_credits != null ? r.dlr_credits : '—'}</td>
                     <td className="muted small">{r.dlr_detail || (r.dlr_status === 'pending' ? 'Awaiting carrier report' : '—')}</td>
                     <td className="muted small">
                       <span className="cell-ellip" title={r.provider_msgid || ''}>{r.provider_msgid || '—'}</span>
@@ -230,7 +232,7 @@ export default function DeliveryReports() {
                 ))}
                 {data.rows.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="muted">No messages match this filter.</td>
+                    <td colSpan={7} className="muted">No messages match this filter.</td>
                   </tr>
                 )}
               </tbody>
