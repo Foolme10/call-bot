@@ -13,7 +13,8 @@
     "dev": "nodemon src/index.js",
     "migrate": "node scripts/migrate.js",
     "create-user": "node scripts/create-user.js",
-    "ensure-support-admin": "node scripts/ensure-support-admin.js"
+    "ensure-support-admin": "node scripts/ensure-support-admin.js",
+    "sms-usage": "node scripts/sms-usage.js"
   },
   "dependencies": {
     "ari-client": "^2.2.0",
