@@ -12,9 +12,10 @@ const { extractContacts, parseManual } = require('../services/fileParser');
 const { engineFor } = require('../services/campaignEngine');
 const { findNonLatin, smsSegments, renderTemplate } = require('../services/smsText');
 
-// Gateway sender-label chars reserved before the body (the "DCA: " identifier
-// is added to the rendered text itself, so it's counted there, not here).
-const smsGatewayPrefixChars = () => config.sms.prefixChars || 0;
+// Chars reserved before the body that are NOT part of the rendered text: the
+// gateway sender label + the always-on safety cushion. (The prepend, e.g.
+// "eSMS: ", IS part of the sent text, so it's counted in the text itself.)
+const smsGatewayPrefixChars = () => (config.sms.prefixChars || 0) + (config.sms.safetyChars || 0);
 
 // Reject a raw SMS body (placeholders NOT expanded) that exceeds the segment
 // cap — used where there's no contact data (template save, blank-list checks).
@@ -84,6 +85,7 @@ router.get('/meta/pacing', (_req, res) => {
       configured: !!config.sms.authKey,
       prefixChars: config.sms.prefixChars,
       prefixLabel: config.sms.prefixLabel,
+      safetyChars: config.sms.safetyChars,
       prepend: config.sms.prepend,
       maxSegments: config.sms.maxSegments,
     },

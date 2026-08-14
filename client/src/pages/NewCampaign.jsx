@@ -364,10 +364,12 @@ export default function NewCampaign() {
   const sampleRow = preview && preview.sample && preview.sample[0];
   const previewName = sampleRow && nameColumn ? sampleRow[nameColumn] : 'Alex';
   const previewAmount = sampleRow && amountColumn ? sampleRow[amountColumn] : '100';
-  const smsPrepend = (pacing && pacing.sms && pacing.sms.prepend) || ''; // e.g. "DCA: " (auto-added)
+  const smsPrepend = (pacing && pacing.sms && pacing.sms.prepend) || ''; // e.g. "eSMS: " (auto-added)
   const smsPrefixChars = (pacing && pacing.sms && pacing.sms.prefixChars) || 0; // gateway sender label (count only)
   const smsPrefixLabel = (pacing && pacing.sms && pacing.sms.prefixLabel) || '';
-  const smsReserved = smsPrepend.length + smsPrefixChars; // total chars eaten before the body
+  const smsSafetyChars = (pacing && pacing.sms && pacing.sms.safetyChars) || 0; // always-on cushion
+  const smsPrefixReserved = smsPrefixChars + smsSafetyChars; // reserved but not in the sent text
+  const smsReserved = smsPrepend.length + smsPrefixReserved; // total chars eaten before the body
   const previewText =
     smsPrepend + renderTemplate(messageTemplate, { name: previewName, amount: previewAmount });
   const seg = smsSegments(messageTemplate, smsReserved);
@@ -387,7 +389,7 @@ export default function NewCampaign() {
           name: nameColumn ? r[nameColumn] : '',
           amount: amountColumn ? r[amountColumn] : '',
         });
-      const s = smsSegments(rendered, smsPrefixChars);
+      const s = smsSegments(rendered, smsPrefixReserved);
       if (!w || s.segments > w.segments || (s.segments === w.segments && s.totalLen > w.totalLen)) w = s;
     }
     if (w) {

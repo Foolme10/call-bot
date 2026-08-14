@@ -197,6 +197,10 @@ const config = {
     // composer's count/segment estimate. SMS_PREFIX_LABEL is shown in the note.
     prefixChars: Math.max(0, Number(process.env.SMS_PREFIX_CHARS || 0)),
     prefixLabel: process.env.SMS_PREFIX_LABEL || '',
+    // Extra characters always held back as a safety cushion on top of the
+    // prefix/prepend, so a message never lands right on the 160 boundary and
+    // spills into a 2nd segment. Default 3. Counted everywhere segments are.
+    safetyChars: Math.max(0, Number(process.env.SMS_SAFETY_CHARS || 3)),
     // Prepended to every message the app sends (default "DCA: ").
     prepend: SMS_PREPEND,
     // Consecutive gateway failures that auto-stop a running campaign (0 = off).

@@ -23,7 +23,7 @@ export default function Library() {
   const [tplName, setTplName] = useState('');
   const [tplBody, setTplBody] = useState('');
   const [editingTpl, setEditingTpl] = useState(null); // id being edited, or null
-  const [smsMeta, setSmsMeta] = useState({ prepend: '', prefixChars: 0, maxSegments: 1 }); // for the segment counter
+  const [smsMeta, setSmsMeta] = useState({ prepend: '', prefixChars: 0, safetyChars: 0, maxSegments: 1 }); // for the segment counter
   const tplBodyRef = useRef(null); // for inserting {name}/{amount} at the cursor
 
   async function load() {
@@ -49,6 +49,7 @@ export default function Library() {
         setSmsMeta({
           prepend: (p.sms && p.sms.prepend) || '',
           prefixChars: (p.sms && p.sms.prefixChars) || 0,
+          safetyChars: (p.sms && p.sms.safetyChars) || 0,
           maxSegments: (p.sms && p.sms.maxSegments) || 1,
         })
       )
@@ -172,7 +173,8 @@ export default function Library() {
     await api.del(`/sms-templates/${id}`).then(load).catch((e) => alert(e.message));
   }
 
-  const tplReserved = (smsMeta.prepend ? smsMeta.prepend.length : 0) + (smsMeta.prefixChars || 0);
+  const tplReserved =
+    (smsMeta.prepend ? smsMeta.prepend.length : 0) + (smsMeta.prefixChars || 0) + (smsMeta.safetyChars || 0);
   const tplSeg = smsSegments(tplBody, tplReserved);
   const tplMaxSegments = smsMeta.maxSegments || 1;
   const tplTooLong = tplBody.length > 0 && tplSeg.segments > tplMaxSegments;

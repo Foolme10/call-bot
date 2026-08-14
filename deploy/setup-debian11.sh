@@ -293,6 +293,9 @@ SMS_MAX_SEGMENTS=1
 # so the composer's length/segment count reflects the real sent message.
 SMS_PREFIX_CHARS=0
 SMS_PREFIX_LABEL=
+# Always-on safety cushion (chars) reserved on top of the prefix/prepend so a
+# message never lands on the 160 boundary and spills into a 2nd segment.
+SMS_SAFETY_CHARS=3
 # Prepended to EVERY outgoing SMS (compliance identifier). "DCA:" by default;
 # set empty to disable. A trailing space is added automatically.
 SMS_PREPEND=DCA:
