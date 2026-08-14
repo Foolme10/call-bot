@@ -663,15 +663,16 @@ export default function NewCampaign() {
             {smsSampleBased ? ' · longest recipient, name filled in' : ''}
             {smsSeg.unicode ? ' · contains non-GSM characters (shorter segments)' : ''}
           </div>
-          {(smsPrepend || smsPrefixChars > 0) && (
+          {(smsPrepend || smsPrefixReserved > 0) && (
             <div className="muted small" style={{ color: '#e3b341' }}>
               ⚠ Every message is sent with
               {smsPrepend ? ` “${smsPrepend.trimEnd()}”` : ''}
               {smsPrepend && smsPrefixChars > 0 ? ' and' : ''}
               {smsPrefixChars > 0
                 ? ` a sender label${smsPrefixLabel ? ` “${smsPrefixLabel}”` : ''} (${smsPrefixChars} chars)`
-                : ''}{' '}
-              prepended — {smsReserved} characters, already counted above.
+                : ''}
+              {smsSafetyChars > 0 ? ` plus a ${smsSafetyChars}-char safety margin` : ''}{' '}
+              — {smsReserved} characters reserved, already counted above.
             </div>
           )}
           {smsBadChars.length > 0 && (

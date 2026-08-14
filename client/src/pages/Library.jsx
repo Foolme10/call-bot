@@ -347,8 +347,9 @@ export default function Library() {
             <div className="muted small">
               Includes {smsMeta.prepend ? `“${smsMeta.prepend.trimEnd()}”` : ''}
               {smsMeta.prepend && smsMeta.prefixChars > 0 ? ' + ' : ''}
-              {smsMeta.prefixChars > 0 ? `sender label (${smsMeta.prefixChars} chars)` : ''} prepended
-              to every message.
+              {smsMeta.prefixChars > 0 ? `sender label (${smsMeta.prefixChars} chars)` : ''}
+              {smsMeta.safetyChars > 0 ? ` + a ${smsMeta.safetyChars}-char safety margin` : ''} — {tplReserved}{' '}
+              characters reserved on every message.
             </div>
           )}
           {findNonLatin(tplBody).length > 0 && (
