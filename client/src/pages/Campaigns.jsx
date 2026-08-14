@@ -274,12 +274,14 @@ export default function Campaigns() {
                 <td>
                   <span className={STATUS_CLASS[c.status] || 'badge'}>{c.status}</span>
                   {c.stop_reason && c.status === 'stopped' && (
-                    <div
-                      className="small"
-                      style={{ marginTop: 4, color: '#ff7b72', maxWidth: 220 }}
-                      title={c.stop_reason}
-                    >
-                      ⏹ Auto-stopped: {c.stop_reason}
+                    <div style={{ marginTop: 4 }}>
+                      <span
+                        className="cell-ellip small"
+                        style={{ color: '#ff7b72' }}
+                        title={c.stop_reason}
+                      >
+                        ⏹ {c.stop_reason}
+                      </span>
                     </div>
                   )}
                   {c.rerun_scope && (
