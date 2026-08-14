@@ -2,7 +2,7 @@
 #
 # call-bot — clean Debian 11 (bullseye) setup + troubleshooter.
 # Installs EVERYTHING on a bare server: Asterisk 16 (chan_sip), MariaDB, Node 20,
-# ffmpeg, nginx, the app itself, systemd service, firewall — then runs a health
+# ffmpeg, nginx, the app itself (run under pm2), firewall — then runs a health
 # check. SIP driver is chan_sip (dial string SIP/{number}@trunk), which is the
 # right choice for Debian 11 / Asterisk 16.
 #
@@ -88,9 +88,19 @@ diagnose() {
 
   # --- services ---
   log "Services"
-  for svc in mariadb asterisk nginx callbot-api; do
+  for svc in mariadb asterisk nginx; do
     if systemctl is-active --quiet "$svc"; then ok "$svc active"; else bad "$svc not active  → journalctl -u $svc -n 40"; fi
   done
+  # The backend runs under pm2 (as $APP_USER), not systemd.
+  if sudo -u "$APP_USER" -H pm2 describe callbot-api >/dev/null 2>&1; then
+    if sudo -u "$APP_USER" -H pm2 jlist 2>/dev/null | grep -q '"name":"callbot-api"[^}]*"status":"online"'; then
+      ok "callbot-api online (pm2)"
+    else
+      bad "callbot-api not online → sudo -u $APP_USER -H pm2 logs callbot-api --lines 40"
+    fi
+  else
+    bad "callbot-api not found in pm2 → sudo -u $APP_USER -H pm2 list"
+  fi
   if command -v netbird >/dev/null 2>&1; then
     if netbird status >/dev/null 2>&1; then ok "netbird running"; else note "netbird installed but not connected → netbird up --setup-key <KEY>"; fi
   fi
@@ -127,7 +137,7 @@ diagnose() {
     echo "$health" | grep -q '"db":"up"'  && ok "API ↔ DB up"  || bad "API can't reach DB"
     echo "$health" | grep -q '"ari":"up"' && ok "API ↔ Asterisk (ARI) up" || bad "API not connected to Asterisk ARI → check ari.conf user/pass matches .env, and 'asterisk -rx \"ari show apps\"'"
   else
-    bad "no response from API → systemctl status callbot-api ; journalctl -u callbot-api -n 40"
+    bad "no response from API → sudo -u $APP_USER -H pm2 logs callbot-api --lines 40"
   fi
 
   # --- Asterisk / ARI / SIP ---
@@ -164,7 +174,7 @@ diagnose() {
   log "Firewall"
   ufw status 2>/dev/null | grep -q "Status: active" && ok "UFW active" || warn "UFW inactive"
 
-  printf '\n\033[1;36mTip:\033[0m live logs → \033[1mjournalctl -u callbot-api -f\033[0m   |   SIP trace → \033[1msngrep\033[0m\n'
+  printf '\n\033[1;36mTip:\033[0m live logs → \033[1msudo -u %s -H pm2 logs callbot-api\033[0m   |   SIP trace → \033[1msngrep\033[0m\n' "$APP_USER"
   printf '\033[1;36m======================================\033[0m\n'
 }
 
@@ -468,13 +478,25 @@ if [ "$TRUNK_MODE" = "netbird" ]; then
   fi
 fi
 
-# ---- systemd service ----
-log "Installing systemd service callbot-api…"
-sed "s#/opt/call-bot#$APP_DIR#g; s#^User=.*#User=$APP_USER#" \
-  "$APP_DIR/deploy/callbot-api.service" > /etc/systemd/system/callbot-api.service
-systemctl daemon-reload
-systemctl enable --now callbot-api
-systemctl restart callbot-api
+# ---- process manager: pm2 (standardized — no hand-rolled systemd unit) ----
+log "Starting callbot-api under pm2…"
+npm install -g pm2 >/dev/null 2>&1 || npm install -g pm2
+
+# Migrate off any old systemd app-unit so two copies don't fight over :4000.
+if systemctl list-unit-files 2>/dev/null | grep -q '^callbot-api\.service'; then
+  log "Removing the old systemd callbot-api unit (migrating to pm2)…"
+  systemctl disable --now callbot-api >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/callbot-api.service
+  systemctl daemon-reload
+fi
+
+# Start (or restart) the backend as the app user under pm2.
+sudo -u "$APP_USER" -H bash -c "cd '$APP_DIR/server' && pm2 delete callbot-api >/dev/null 2>&1; pm2 start src/index.js --name callbot-api --time"
+sudo -u "$APP_USER" -H pm2 save
+# Resurrect pm2 (and callbot-api) on boot. pm2 installs its own small boot unit
+# for this — that's pm2's standard mechanism, not a per-app systemd service.
+pm2 startup systemd -u "$APP_USER" --hp "/home/$APP_USER" >/dev/null 2>&1 || true
+sudo -u "$APP_USER" -H pm2 save
 
 # ---- nginx ----
 log "Configuring nginx…"

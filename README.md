@@ -235,9 +235,19 @@ sudo cp ../deploy/nginx-callbot.conf /etc/nginx/sites-available/callbot
 sudo ln -s /etc/nginx/sites-available/callbot /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 
-# backend as a service
-sudo cp deploy/callbot-api.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now callbot-api
+# backend under pm2 (the standard process manager for this app)
+sudo npm install -g pm2
+sudo -u callbot -H bash -c "cd /opt/call-bot/server && pm2 start src/index.js --name callbot-api --time"
+sudo -u callbot -H pm2 save
+sudo pm2 startup systemd -u callbot --hp /home/callbot   # resurrect on boot
+```
+
+Everyday pm2 commands (run as the app user):
+
+```bash
+sudo -u callbot -H pm2 status            # is it online?
+sudo -u callbot -H pm2 restart callbot-api
+sudo -u callbot -H pm2 logs callbot-api  # live logs
 ```
 
 Then run **certbot** to add HTTPS — the JWT travels in the Authorization header

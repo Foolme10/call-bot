@@ -275,12 +275,23 @@ systemctl daemon-reload
 systemctl enable asterisk >/dev/null 2>&1 || true
 systemctl restart asterisk
 
-# ---- systemd service for the backend ----
-log "Installing systemd service…"
-sed "s#/opt/call-bot#$APP_DIR#g; s#^User=.*#User=$APP_USER#" \
-  "$APP_DIR/deploy/callbot-api.service" > /etc/systemd/system/callbot-api.service
-systemctl daemon-reload
-systemctl enable --now callbot-api
+# ---- process manager: pm2 (standardized — no hand-rolled systemd unit) ----
+log "Starting callbot-api under pm2…"
+npm install -g pm2 >/dev/null 2>&1 || npm install -g pm2
+
+# Migrate off any old systemd app-unit so two copies don't fight over :4000.
+if systemctl list-unit-files 2>/dev/null | grep -q '^callbot-api\.service'; then
+  log "Removing the old systemd callbot-api unit (migrating to pm2)…"
+  systemctl disable --now callbot-api >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/callbot-api.service
+  systemctl daemon-reload
+fi
+
+sudo -u "$APP_USER" -H bash -c "cd '$APP_DIR/server' && pm2 delete callbot-api >/dev/null 2>&1; pm2 start src/index.js --name callbot-api --time"
+sudo -u "$APP_USER" -H pm2 save
+# Resurrect pm2 (and callbot-api) on boot — pm2's own boot hook.
+pm2 startup systemd -u "$APP_USER" --hp "/home/$APP_USER" >/dev/null 2>&1 || true
+sudo -u "$APP_USER" -H pm2 save
 
 # ---- nginx ----
 log "Configuring nginx…"
@@ -347,6 +358,6 @@ cat <<SUMMARY
          curl -s localhost:4000/api/health
    3. Log in, add a caller ID + audio, and run a tiny test campaign.
 
- Service logs:  journalctl -u callbot-api -f
+ Service logs:  sudo -u $APP_USER -H pm2 logs callbot-api
 SUMMARY
 printf '\033[1;32m============================================================\033[0m\n'

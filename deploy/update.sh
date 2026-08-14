@@ -40,17 +40,17 @@ main() {
   cp -r "$APP_DIR/client/dist/." "$WEB_ROOT/"
 
   log "Restarting backend…"
-  # Restart whichever supervisor is actually running the backend. Checking the
-  # ACTIVE one first matters: a box can have a disabled systemd unit lying
-  # around while pm2 does the real work, and starting both fights over port 4000.
-  if systemctl is-active --quiet callbot-api 2>/dev/null; then
-    systemctl restart callbot-api
-  elif sudo -u "$APP_USER" -H pm2 describe callbot-api >/dev/null 2>&1; then
-    sudo -u "$APP_USER" -H pm2 restart callbot-api
-  elif systemctl list-unit-files 2>/dev/null | grep -q '^callbot-api'; then
+  # The backend is standardized on pm2, so try that first. The systemd branch is
+  # only a fallback for an old box that hasn't been re-run through the installer
+  # yet (which migrates it to pm2). Never start both — they'd fight over :4000.
+  if sudo -u "$APP_USER" -H pm2 describe callbot-api >/dev/null 2>&1; then
+    sudo -u "$APP_USER" -H pm2 restart callbot-api --update-env
+  elif systemctl is-active --quiet callbot-api 2>/dev/null \
+    || systemctl list-unit-files 2>/dev/null | grep -q '^callbot-api'; then
+    echo "[warn] callbot-api is still on systemd — re-run deploy/setup-debian11.sh to migrate it to pm2."
     systemctl restart callbot-api
   else
-    echo "[warn] Could not find a callbot-api service (systemd or pm2) — restart it manually."
+    echo "[warn] Could not find a callbot-api service (pm2 or systemd) — restart it manually."
   fi
 
   sleep 2
