@@ -10,7 +10,28 @@ const { requireAuth } = require('../middleware/auth');
 const { resolveTmpUpload } = require('../middleware/upload');
 const { extractContacts, parseManual } = require('../services/fileParser');
 const { engineFor } = require('../services/campaignEngine');
-const { findNonLatin } = require('../services/smsText');
+const { findNonLatin, smsSegments } = require('../services/smsText');
+
+// Characters the gateway/app prepend to every message, which count toward the
+// segment length: the "DCA: " identifier + the reserved sender-label chars.
+function smsReservedChars() {
+  return (config.sms.prepend ? config.sms.prepend.length : 0) + (config.sms.prefixChars || 0);
+}
+
+// Reject an SMS body that would exceed the configured segment cap (prefix
+// included). Keeps campaigns/templates within SMS_MAX_SEGMENTS.
+function assertSmsWithinSegments(text) {
+  const { segments, totalLen } = smsSegments(text, smsReservedChars());
+  const max = config.sms.maxSegments;
+  if (segments > max) {
+    throw new ApiError(
+      400,
+      max === 1
+        ? `Message is too long: ${totalLen} characters (prefix included) needs ${segments} SMS segments, but only 1 (160 characters) is allowed. Please shorten it.`
+        : `Message is too long: ${totalLen} characters needs ${segments} SMS segments, but the limit is ${max}. Please shorten it.`
+    );
+  }
+}
 
 const router = express.Router();
 router.use(requireAuth);
@@ -38,6 +59,7 @@ router.get('/meta/pacing', (_req, res) => {
       prefixChars: config.sms.prefixChars,
       prefixLabel: config.sms.prefixLabel,
       prepend: config.sms.prepend,
+      maxSegments: config.sms.maxSegments,
     },
   });
 });
@@ -169,6 +191,7 @@ router.post(
         throw new ApiError(400, 'SMS campaigns need message text');
       }
       assertLatinSms(d.messageTemplate);
+      assertSmsWithinSegments(d.messageTemplate);
     } else {
       if (!d.audioFileId) throw new ApiError(400, 'Voice campaigns need an audio recording');
       const audio = await db.query(
@@ -224,9 +247,10 @@ router.post(
       }
     }
 
-    const maxAttempts = d.maxAttempts || 1;
-    const retryDelayMin = d.retryDelayMin || 0;
-    const retryOn = (d.retryOn && d.retryOn.length ? d.retryOn : DEFAULT_RETRY_ON).join(',');
+    // SMS never retries; voice uses the requested (or default) retry settings.
+    const maxAttempts = isSms ? 1 : d.maxAttempts || 1;
+    const retryDelayMin = isSms ? 0 : d.retryDelayMin || 0;
+    const retryOn = isSms ? '' : (d.retryOn && d.retryOn.length ? d.retryOn : DEFAULT_RETRY_ON).join(',');
 
     // Auto-pace from the list size, capped to the channel's ceiling. intensity_level
     // is kept as 0 to mark "auto" (the column stays for history/back-compat).
@@ -471,7 +495,10 @@ router.patch(
     if (d.messageTemplate !== undefined && !d.messageTemplate.trim()) {
       throw new ApiError(400, 'Message text cannot be blank');
     }
-    if (d.messageTemplate !== undefined) assertLatinSms(d.messageTemplate);
+    if (d.messageTemplate !== undefined) {
+      assertLatinSms(d.messageTemplate);
+      assertSmsWithinSegments(d.messageTemplate);
+    }
 
     if (d.audioFileId !== undefined) {
       const audio = await db.query(

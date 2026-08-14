@@ -55,14 +55,13 @@ class SmsRunner {
     this.cps = Number(campaign.cps) || 1;
     this.maxConcurrent = Number(campaign.max_concurrent) || 10; // in-flight HTTP cap
     this.template = campaign.message_template || '';
-    this.maxAttempts = Number(campaign.max_attempts) || 1;
-    this.retryDelayMin = Number(campaign.retry_delay_min) || 0;
-    this.retryOn = new Set(
-      String(campaign.retry_on || '')
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean)
-    );
+    // SMS campaigns never auto-retry — exactly one send attempt per recipient.
+    // (A gateway reject won't succeed on a resend, and a message the gateway
+    // accepted must not be sent twice.) Redialing unreached numbers is still a
+    // separate, manual action.
+    this.maxAttempts = 1;
+    this.retryDelayMin = 0;
+    this.retryOn = new Set();
     this.maxTotalDials = config.calls.maxTotalDials; // shared lifetime cap
     this.nextRetryAt = null;
     this.inFlight = 0; // this campaign's in-flight sends

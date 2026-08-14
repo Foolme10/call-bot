@@ -259,6 +259,12 @@ export default function NewCampaign() {
         return setError(
           `Remove non-Latin characters from the message (${smsBadChars.join(' ')}). SMS must use plain Latin (English) characters only.`
         );
+      if (smsTooLong)
+        return setError(
+          smsMaxSegments === 1
+            ? `Message is too long: it needs ${seg.segments} SMS segments (${seg.totalLen} characters incl. the prefix), but only 1 segment (160 characters) is allowed. Please shorten it.`
+            : `Message is too long: it needs ${seg.segments} SMS segments, but the limit is ${smsMaxSegments}. Please shorten it.`
+        );
     } else if (!audioFileId) {
       return setError('Choose an audio recording to play.');
     }
@@ -366,6 +372,9 @@ export default function NewCampaign() {
     smsPrepend + renderTemplate(messageTemplate, { name: previewName, amount: previewAmount });
   const seg = smsSegments(messageTemplate, smsReserved);
   const smsBadChars = isSms ? findNonLatin(messageTemplate) : [];
+  const smsMaxSegments = (pacing && pacing.sms && pacing.sms.maxSegments) || 1;
+  // Message (prefix included) is over the allowed segment cap → block the blast.
+  const smsTooLong = isSms && messageTemplate.length > 0 && seg.segments > smsMaxSegments;
   const smsConfigured = !pacing || !pacing.sms || pacing.sms.configured !== false;
 
   return (
@@ -621,7 +630,10 @@ export default function NewCampaign() {
           <div className="muted small" style={{ marginTop: 6 }}>
             {seg.bodyLen} characters
             {smsReserved > 0 ? ` + ${smsReserved} prepended = ${seg.totalLen}` : ''} · ~
-            {seg.segments} SMS segment{seg.segments === 1 ? '' : 's'}
+            <span style={smsTooLong ? { color: '#ff7b72', fontWeight: 700 } : undefined}>
+              {seg.segments} SMS segment{seg.segments === 1 ? '' : 's'}
+            </span>{' '}
+            (max {smsMaxSegments})
             {seg.unicode ? ' · contains non-GSM characters (shorter segments)' : ''}
           </div>
           {(smsPrepend || smsPrefixChars > 0) && (
@@ -640,6 +652,14 @@ export default function NewCampaign() {
               ⚠ Remove these non-Latin characters before sending:{' '}
               <strong>{smsBadChars.join(' ')}</strong>. SMS must use plain Latin (English) characters
               only — other scripts are more expensive and may be blocked.
+            </div>
+          )}
+          {smsTooLong && (
+            <div className="alert error" style={{ marginTop: 8 }}>
+              ⚠ Message is too long — it needs <strong>{seg.segments} SMS segments</strong> (
+              {seg.totalLen} characters incl. the prefix), but the limit is{' '}
+              <strong>{smsMaxSegments === 1 ? '1 segment (160 characters)' : `${smsMaxSegments} segments`}</strong>.
+              Shorten the message to send it.
             </div>
           )}
           {messageTemplate.trim() && (
@@ -750,12 +770,11 @@ export default function NewCampaign() {
         )}
       </section>
 
+      {!isSms && (
       <section className="card">
         <h3>5. Retries</h3>
         <p className="muted small">
-          {isSms
-            ? 'Re-send to numbers the gateway couldn’t accept due to a temporary error. Permanent rejects (bad number, no credit) are never retried.'
-            : 'Re-dial numbers that didn’t connect. Answered calls are never retried.'}
+          Re-dial numbers that didn’t connect. Answered calls are never retried.
         </p>
         <div className="row">
           <div>
@@ -799,9 +818,10 @@ export default function NewCampaign() {
           </>
         )}
       </section>
+      )}
 
       <section className="card">
-        <h3>6. When to run</h3>
+        <h3>{isSms ? '5' : '6'}. When to run</h3>
         <div className="radio-row">
           <label>
             <input
@@ -835,7 +855,7 @@ export default function NewCampaign() {
           {readOnly ? 'Back' : 'Cancel'}
         </button>
         {!readOnly && (
-          <button className="btn primary" disabled={busy || smsBadChars.length > 0}>
+          <button className="btn primary" disabled={busy || smsBadChars.length > 0 || smsTooLong}>
             {busy
               ? 'Saving…'
               : editMode

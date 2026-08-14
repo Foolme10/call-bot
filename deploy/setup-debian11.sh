@@ -287,6 +287,8 @@ SMS_API_URL=https://api.sms.nxsip.com/
 SMS_AUTH_KEY=
 SMS_MAX_CPS=10
 SMS_MAX_CONCURRENT=20
+# Max SMS segments allowed per message (prefix included). 1 = single 160-char SMS.
+SMS_MAX_SEGMENTS=1
 # Reserve chars for the gateway's prepended sender label (e.g. "RM0 BRAND: ")
 # so the composer's length/segment count reflects the real sent message.
 SMS_PREFIX_CHARS=0

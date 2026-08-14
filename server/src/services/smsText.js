@@ -17,4 +17,18 @@ function findNonLatin(text) {
   return bad;
 }
 
-module.exports = { findNonLatin };
+// SMS segment estimate — must match client/src/smsText.js. `prefixChars`
+// reserves space for text prepended before the body (the "DCA: " identifier +
+// the gateway sender label) so the count reflects what's actually sent.
+function smsSegments(text, prefixChars = 0) {
+  const body = String(text == null ? '' : text);
+  const totalLen = body.length + Math.max(0, prefixChars);
+  if (totalLen === 0) return { totalLen, segments: 0, unicode: false };
+  const unicode = /[^\x00-\x7F]/.test(body);
+  const single = unicode ? 70 : 160;
+  const multi = unicode ? 67 : 153;
+  const segments = totalLen <= single ? 1 : Math.ceil(totalLen / multi);
+  return { totalLen, segments, unicode };
+}
+
+module.exports = { findNonLatin, smsSegments };

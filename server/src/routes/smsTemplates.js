@@ -3,9 +3,10 @@
 const express = require('express');
 const { z } = require('zod');
 const db = require('../db');
+const config = require('../config');
 const { ApiError, asyncHandler } = require('../http');
 const { requireAuth } = require('../middleware/auth');
-const { findNonLatin } = require('../services/smsText');
+const { findNonLatin, smsSegments } = require('../services/smsText');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -18,6 +19,23 @@ function assertLatinBody(body) {
     throw new ApiError(
       400,
       `Template contains characters that aren't allowed: ${bad.join(' ')} — use plain Latin (English) characters only.`
+    );
+  }
+}
+
+// Reject a template that would exceed the configured segment cap (prefix
+// included), matching the campaign composer's limit.
+function assertWithinSegments(body) {
+  const reserved =
+    (config.sms.prepend ? config.sms.prepend.length : 0) + (config.sms.prefixChars || 0);
+  const { segments, totalLen } = smsSegments(body, reserved);
+  const max = config.sms.maxSegments;
+  if (segments > max) {
+    throw new ApiError(
+      400,
+      max === 1
+        ? `Template is too long: ${totalLen} characters (prefix included) needs ${segments} SMS segments, but only 1 (160 characters) is allowed. Please shorten it.`
+        : `Template is too long: ${totalLen} characters needs ${segments} SMS segments, but the limit is ${max}. Please shorten it.`
     );
   }
 }
@@ -47,6 +65,7 @@ router.post(
     if (!parsed.success) throw new ApiError(400, 'A template needs a name and message text');
     const { name, body } = parsed.data;
     assertLatinBody(body);
+    assertWithinSegments(body);
     const result = await db.execute(
       'INSERT INTO sms_templates (user_id, name, body) VALUES (:uid, :name, :body)',
       { uid: req.user.id, name, body }
@@ -74,6 +93,7 @@ router.patch(
     }
     if (d.body !== undefined) {
       assertLatinBody(d.body);
+      assertWithinSegments(d.body);
       sets.push('body = :body');
       params.body = d.body;
     }

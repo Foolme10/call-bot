@@ -39,6 +39,12 @@ const VOICE_PRICE_PER_BLOCK_SEN = Math.max(0, Number(process.env.VOICE_PRICE_PER
 const SMS_MAX_CPS = Math.max(1, Number(process.env.SMS_MAX_CPS || 10));
 const SMS_MAX_CONCURRENT = Math.max(1, Number(process.env.SMS_MAX_CONCURRENT || 20));
 
+// Hard cap on how many SMS segments a template/campaign message may use, prefix
+// included. Default 1 — a single 160-char GSM message. Templates over the cap
+// are blocked (warned in the composer, rejected by the API). Raise it in .env
+// to allow longer (multi-segment) messages.
+const SMS_MAX_SEGMENTS = Math.max(1, Number(process.env.SMS_MAX_SEGMENTS || 1));
+
 // Safety brake: if the gateway keeps rejecting sends while a campaign runs,
 // auto-stop the whole campaign instead of burning through the list. Some
 // errors (bad auth key, no credit) stop it immediately; other systemic errors
@@ -177,6 +183,8 @@ const config = {
     authKey: process.env.SMS_AUTH_KEY || '', // blank = SMS not configured (sends fail with a clear error)
     maxCps: SMS_MAX_CPS,
     maxConcurrent: SMS_MAX_CONCURRENT,
+    // Max SMS segments allowed per message (prefix included). Default 1.
+    maxSegments: SMS_MAX_SEGMENTS,
     // Trunk-wide cap on simultaneous in-flight sends across ALL SMS campaigns.
     globalMaxConcurrent: Math.max(
       SMS_MAX_CONCURRENT,

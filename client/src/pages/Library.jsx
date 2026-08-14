@@ -23,7 +23,7 @@ export default function Library() {
   const [tplName, setTplName] = useState('');
   const [tplBody, setTplBody] = useState('');
   const [editingTpl, setEditingTpl] = useState(null); // id being edited, or null
-  const [smsMeta, setSmsMeta] = useState({ prepend: '', prefixChars: 0 }); // for the segment counter
+  const [smsMeta, setSmsMeta] = useState({ prepend: '', prefixChars: 0, maxSegments: 1 }); // for the segment counter
   const tplBodyRef = useRef(null); // for inserting {name}/{amount} at the cursor
 
   async function load() {
@@ -49,6 +49,7 @@ export default function Library() {
         setSmsMeta({
           prepend: (p.sms && p.sms.prepend) || '',
           prefixChars: (p.sms && p.sms.prefixChars) || 0,
+          maxSegments: (p.sms && p.sms.maxSegments) || 1,
         })
       )
       .catch(() => {});
@@ -134,6 +135,12 @@ export default function Library() {
       return setError(
         `Remove non-Latin characters from the message (${bad.join(' ')}). Templates must use plain Latin (English) characters only.`
       );
+    if (tplTooLong)
+      return setError(
+        tplMaxSegments === 1
+          ? `Template is too long: it needs ${tplSeg.segments} SMS segments (${tplSeg.totalLen} characters incl. the prefix), but only 1 segment (160 characters) is allowed. Please shorten it.`
+          : `Template is too long: it needs ${tplSeg.segments} SMS segments, but the limit is ${tplMaxSegments}. Please shorten it.`
+      );
     try {
       if (editingTpl) {
         await api.patch(`/sms-templates/${editingTpl}`, { name: tplName, body: tplBody });
@@ -167,6 +174,8 @@ export default function Library() {
 
   const tplReserved = (smsMeta.prepend ? smsMeta.prepend.length : 0) + (smsMeta.prefixChars || 0);
   const tplSeg = smsSegments(tplBody, tplReserved);
+  const tplMaxSegments = smsMeta.maxSegments || 1;
+  const tplTooLong = tplBody.length > 0 && tplSeg.segments > tplMaxSegments;
 
   return (
     <div>
@@ -326,7 +335,10 @@ export default function Library() {
           <div className="muted small" style={{ marginTop: 6 }}>
             {tplSeg.bodyLen} characters
             {tplReserved > 0 ? ` + ${tplReserved} prepended = ${tplSeg.totalLen}` : ''} · ~
-            {tplSeg.segments} SMS segment{tplSeg.segments === 1 ? '' : 's'}
+            <span style={tplTooLong ? { color: '#ff7b72', fontWeight: 700 } : undefined}>
+              {tplSeg.segments} SMS segment{tplSeg.segments === 1 ? '' : 's'}
+            </span>{' '}
+            (max {tplMaxSegments})
             {tplSeg.unicode ? ' · contains non-GSM characters (shorter segments)' : ''}
           </div>
           {tplReserved > 0 && (
@@ -342,6 +354,14 @@ export default function Library() {
               ⚠ Remove these non-Latin characters:{' '}
               <strong>{findNonLatin(tplBody).join(' ')}</strong>. Templates must use plain Latin
               (English) characters only.
+            </div>
+          )}
+          {tplTooLong && (
+            <div className="alert error" style={{ marginTop: 8 }}>
+              ⚠ Template is too long — it needs <strong>{tplSeg.segments} SMS segments</strong> (
+              {tplSeg.totalLen} characters incl. the prefix), but the limit is{' '}
+              <strong>{tplMaxSegments === 1 ? '1 segment (160 characters)' : `${tplMaxSegments} segments`}</strong>.
+              Shorten it to save.
             </div>
           )}
           {tplBody.trim() && (
@@ -360,7 +380,7 @@ export default function Library() {
                 Cancel
               </button>
             )}
-            <button className="btn primary" disabled={findNonLatin(tplBody).length > 0}>
+            <button className="btn primary" disabled={findNonLatin(tplBody).length > 0 || tplTooLong}>
               {editingTpl ? 'Save changes' : 'Add template'}
             </button>
           </div>
