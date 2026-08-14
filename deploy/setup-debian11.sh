@@ -212,7 +212,7 @@ log "Installing system packages (this pulls in Asterisk, MariaDB, nginx, ffmpeg 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y \
-  curl ca-certificates gnupg openssl git jq \
+  sudo curl ca-certificates gnupg openssl git jq \
   asterisk asterisk-modules \
   mariadb-server \
   ffmpeg nginx certbot python3-certbot-nginx \
