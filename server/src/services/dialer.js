@@ -15,6 +15,7 @@ const runners = new Map(); // campaignId -> Runner
 const activeCalls = new Map(); // channelId -> { campaignId, callLogId, answered, media, runner, playbackId }
 const playbackIndex = new Map(); // playbackId -> channelId
 let schedulerTimer = null;
+let reaperTimer = null;
 // Live calls across ALL campaigns right now — the shared trunk budget. Kept in
 // sync one-for-one with activeCalls (++ on dispatch, -- on finalize).
 let globalLive = 0;
@@ -66,6 +67,7 @@ class Runner {
     this.media = campaign.audio_stored
       ? `sound:${path.posix.join('callbot', campaign.audio_stored)}`
       : null;
+    this.mediaDuration = Number(campaign.audio_duration) || 0; // seconds, for the auto-hangup guard
     // Redial / multi-attempt settings (snapshotted on the campaign).
     this.maxAttempts = Number(campaign.max_attempts) || 1;
     this.retryDelayMin = Number(campaign.retry_delay_min) || 0;
@@ -203,6 +205,8 @@ class Runner {
       phone: row.phone,
       answered: false,
       media: this.media,
+      mediaDuration: this.mediaDuration,
+      guardTimer: null, // auto-hangup safety timer (armed when playback starts)
       runner: this,
       finalized: false,
       attempt: (row.attempts || 0) + 1, // this dial is attempt N
@@ -255,6 +259,34 @@ function registerHandlers(client) {
   client.removeAllListeners('StasisEnd');
   client.removeAllListeners('PlaybackFinished');
   client.removeAllListeners('ChannelDestroyed');
+
+  // Arm the auto-hangup safety once a recording starts playing. It fires only if
+  // the call outlives the recording's own length + a buffer — i.e. the normal
+  // "hang up when the audio ends" never happened. Unknown length → fallback cap.
+  function armHangupGuard(channelId) {
+    const call = activeCalls.get(channelId);
+    if (!call) return;
+    const sec =
+      call.mediaDuration > 0 ? call.mediaDuration + config.dial.hangupBufferSec : config.dial.maxCallSeconds;
+    if (call.guardTimer) clearTimeout(call.guardTimer);
+    call.guardTimer = setTimeout(() => {
+      hangupGuardFired(channelId).catch((e) => logger.error(`Hangup guard ${channelId}:`, e.message));
+    }, sec * 1000);
+  }
+
+  async function hangupGuardFired(channelId) {
+    const call = activeCalls.get(channelId);
+    if (!call || call.finalized) return;
+    logger.warn(`Call ${channelId} outlived its recording — force hanging up (auto-cut)`);
+    try {
+      await client.channels.hangup({ channelId });
+    } catch (_e) {
+      /* channel may already be gone (a missed event) — finalize the row anyway */
+    }
+    // Finalize directly so the row gets an end_time and drops off the monitor
+    // even when the channel was already dead and no ChannelDestroyed will come.
+    await finalizeCall(channelId, 16 /* normal clearing */, call.answered ? 'answered' : undefined);
+  }
 
   client.on('StasisStart', async (_event, channel) => {
     const call = activeCalls.get(channel.id);
@@ -317,6 +349,7 @@ function registerHandlers(client) {
       const playback = await channel.play({ media: call.media });
       call.playbackId = playback.id;
       playbackIndex.set(playback.id, channel.id);
+      armHangupGuard(channel.id); // safety: force-cut if the recording never "finishes"
     } catch (err) {
       logger.warn(`Playback failed on ${channel.id}: ${err.message}`);
       try {
@@ -330,6 +363,12 @@ function registerHandlers(client) {
     const channelId = playbackIndex.get(playback.id);
     if (!channelId) return;
     playbackIndex.delete(playback.id);
+    // The recording finished normally — cancel the safety timer and hang up now.
+    const call = activeCalls.get(channelId);
+    if (call && call.guardTimer) {
+      clearTimeout(call.guardTimer);
+      call.guardTimer = null;
+    }
     try {
       await client.channels.hangup({ channelId });
     } catch (_e) {}
@@ -348,6 +387,7 @@ async function finalizeCall(channelId, cause, forcedStatus) {
   call.finalized = true;
   activeCalls.delete(channelId);
   globalLive = Math.max(0, globalLive - 1);
+  if (call.guardTimer) clearTimeout(call.guardTimer);
   if (call.playbackId) playbackIndex.delete(call.playbackId);
 
   const status = forcedStatus || call.outcome || mapCause(cause, call.answered);
@@ -420,7 +460,8 @@ async function finalizeCall(channelId, cause, forcedStatus) {
 // ───────────────────────────────────────────────────────────────────────────
 async function loadCampaignRow(campaignId) {
   const rows = await db.query(
-    `SELECT c.*, ci.number AS caller_number, a.stored_filename AS audio_stored
+    `SELECT c.*, ci.number AS caller_number,
+            a.stored_filename AS audio_stored, a.duration_sec AS audio_duration
        FROM campaigns c
        LEFT JOIN caller_ids  ci ON ci.id = c.caller_id_id
        LEFT JOIN audio_files a  ON a.id = c.audio_file_id
@@ -555,6 +596,7 @@ async function refreshCampaign(campaignId) {
   if (!c) return;
   runner.callerId = c.caller_number || null;
   runner.media = c.audio_stored ? `sound:${path.posix.join('callbot', c.audio_stored)}` : null;
+  runner.mediaDuration = Number(c.audio_duration) || 0;
   logger.info(`Campaign ${campaignId} runner refreshed (callerId/media updated)`);
 }
 
@@ -599,6 +641,17 @@ async function onConnect(client) {
       WHERE status = 'dialing'
         AND campaign_id IN (SELECT id FROM campaigns WHERE channel = 'voice')`
   );
+  // A call that had already ANSWERED before the reconnect/restart has lost its
+  // channel — finalize it (it WAS reached) so it becomes terminal instead of
+  // sitting 'answered' with no end_time, which freezes it on the Live Monitor
+  // with a runaway timer.
+  await db.execute(
+    `UPDATE call_logs
+        SET end_time = UTC_TIMESTAMP(),
+            duration_sec = TIMESTAMPDIFF(SECOND, COALESCE(answer_time, dial_start), UTC_TIMESTAMP())
+      WHERE status = 'answered' AND end_time IS NULL
+        AND campaign_id IN (SELECT id FROM campaigns WHERE channel = 'voice')`
+  );
   activeCalls.clear();
   playbackIndex.clear();
   globalLive = 0;
@@ -614,6 +667,41 @@ async function onConnect(client) {
     } catch (e) {
       logger.error(`Could not resume campaign ${c.id}:`, e.message);
     }
+  }
+}
+
+// Belt for the per-call guard: finalize any voice call still 'dialing'/'answered'
+// with no end_time long past when it could still be live — e.g. orphaned by a
+// process crash mid-call, or an ARI event that was fully lost. Never touches a
+// call we're still actively tracking, and only rows well older than any real
+// call, so it can't cut a live one.
+async function reapStuckCalls() {
+  try {
+    const activeIds = new Set([...activeCalls.values()].map((c) => c.callLogId));
+    const cutoff = config.dial.maxCallSeconds + 120; // generous — beyond any real call
+    const rows = await db.query(
+      `SELECT id FROM call_logs
+         WHERE status IN ('dialing','answered') AND end_time IS NULL
+           AND dial_start < DATE_SUB(UTC_TIMESTAMP(), INTERVAL :cutoff SECOND)
+           AND campaign_id IN (SELECT id FROM campaigns WHERE channel = 'voice')`,
+      { cutoff }
+    );
+    let reaped = 0;
+    for (const r of rows) {
+      if (activeIds.has(r.id)) continue; // still tracking this one — leave it
+      const res = await db.execute(
+        `UPDATE call_logs
+            SET status = CASE WHEN answer_time IS NOT NULL THEN 'answered' ELSE 'failed' END,
+                end_time = UTC_TIMESTAMP(),
+                duration_sec = TIMESTAMPDIFF(SECOND, COALESCE(answer_time, dial_start), UTC_TIMESTAMP())
+          WHERE id = :id AND end_time IS NULL`,
+        { id: r.id }
+      );
+      reaped += res.affectedRows > 0 ? 1 : 0;
+    }
+    if (reaped) logger.warn(`Reaped ${reaped} stuck voice call row(s)`);
+  } catch (e) {
+    logger.error('Stuck-call reaper error:', e.message);
   }
 }
 
@@ -636,10 +724,12 @@ async function checkScheduled() {
 async function start() {
   await ari.connect(onConnect);
   schedulerTimer = setInterval(checkScheduled, 30000);
+  reaperTimer = setInterval(reapStuckCalls, 60000);
 }
 
 function stop() {
   if (schedulerTimer) clearInterval(schedulerTimer);
+  if (reaperTimer) clearInterval(reaperTimer);
   for (const runner of runners.values()) runner.pause();
   ari.stop();
 }

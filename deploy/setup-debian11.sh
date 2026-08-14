@@ -282,6 +282,11 @@ DIAL_PREFIX=
 DEFAULT_COUNTRY_CODE=
 ORIGINATE_TIMEOUT=30
 DIAL_AMD_CONTEXT=callbot-amd
+# Auto-hangup safety: normally a call ends when its recording finishes; if that
+# is missed, force-cut after the recording length + this buffer (unknown length
+# falls back to DIAL_MAX_CALL_SECONDS).
+DIAL_HANGUP_BUFFER_SEC=20
+DIAL_MAX_CALL_SECONDS=300
 
 # Trunk capacity — auto-pacing never exceeds these.
 MAX_CONCURRENT_CALLS=$MAX_CONCURRENT_CALLS

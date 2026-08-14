@@ -160,6 +160,15 @@ const config = {
     // Dialplan context (extensions.conf) that runs AMD() then Stasis() for
     // answering-machine-detection campaigns.
     amdContext: process.env.DIAL_AMD_CONTEXT || 'callbot-amd',
+    // Auto-hangup safety. A broadcast call normally ends the moment its
+    // recording finishes (PlaybackFinished → hangup). If that's ever missed
+    // (playback stalls, the far end just holds the line, or an ARI event is
+    // lost), force the hangup after the recording's OWN length plus this many
+    // seconds of buffer — so it never cuts a real message short, whatever its
+    // length. For a recording whose length we don't know, fall back to
+    // maxCallSeconds. A periodic reaper finalizes anything still orphaned.
+    hangupBufferSec: Math.max(2, Number(process.env.DIAL_HANGUP_BUFFER_SEC || 20)),
+    maxCallSeconds: Math.max(30, Number(process.env.DIAL_MAX_CALL_SECONDS || 300)),
   },
 
   calls: {
