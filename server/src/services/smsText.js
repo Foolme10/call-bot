@@ -31,4 +31,15 @@ function smsSegments(text, prefixChars = 0) {
   return { totalLen, segments, unicode };
 }
 
-module.exports = { findNonLatin, smsSegments };
+// Fill {name}/{amount} placeholders (case-insensitive) from a contact row —
+// must match client/src/smsText.js and smsSender.renderTemplate. Single-pass so
+// a value containing a token isn't re-expanded; missing values -> empty string.
+function renderTemplate(template, { name, amount } = {}) {
+  const values = {
+    name: name == null ? '' : String(name),
+    amount: amount == null ? '' : String(amount),
+  };
+  return String(template || '').replace(/\{\s*(name|amount)\s*\}/gi, (_m, key) => values[key.toLowerCase()]);
+}
+
+module.exports = { findNonLatin, smsSegments, renderTemplate };

@@ -262,8 +262,8 @@ export default function NewCampaign() {
       if (smsTooLong)
         return setError(
           smsMaxSegments === 1
-            ? `Message is too long: it needs ${seg.segments} SMS segments (${seg.totalLen} characters incl. the prefix), but only 1 segment (160 characters) is allowed. Please shorten it.`
-            : `Message is too long: it needs ${seg.segments} SMS segments, but the limit is ${smsMaxSegments}. Please shorten it.`
+            ? `Message is too long: it needs ${smsSeg.segments} SMS segments (${smsSeg.totalLen} characters incl. the prefix${smsSampleBased ? ' and name' : ''}), but only 1 segment (160 characters) is allowed. Please shorten it.`
+            : `Message is too long: it needs ${smsSeg.segments} SMS segments, but the limit is ${smsMaxSegments}. Please shorten it.`
         );
     } else if (!audioFileId) {
       return setError('Choose an audio recording to play.');
@@ -371,10 +371,34 @@ export default function NewCampaign() {
   const previewText =
     smsPrepend + renderTemplate(messageTemplate, { name: previewName, amount: previewAmount });
   const seg = smsSegments(messageTemplate, smsReserved);
+  // Worst-case segments using the REAL preview rows (name/amount expanded), so
+  // the counter reflects the actual sent message, not the literal "{name}". The
+  // server re-checks EVERY recipient on submit; this covers the sample rows we
+  // have client-side, and falls back to the literal template for a typed list.
+  const smsSampleRows = (preview && preview.sample) || [];
+  let smsSeg = seg;
+  let smsSampleBased = false;
+  if (isSms && messageTemplate && smsSampleRows.length) {
+    let w = null;
+    for (const r of smsSampleRows) {
+      const rendered =
+        smsPrepend +
+        renderTemplate(messageTemplate, {
+          name: nameColumn ? r[nameColumn] : '',
+          amount: amountColumn ? r[amountColumn] : '',
+        });
+      const s = smsSegments(rendered, smsPrefixChars);
+      if (!w || s.segments > w.segments || (s.segments === w.segments && s.totalLen > w.totalLen)) w = s;
+    }
+    if (w) {
+      smsSeg = w;
+      smsSampleBased = true;
+    }
+  }
   const smsBadChars = isSms ? findNonLatin(messageTemplate) : [];
   const smsMaxSegments = (pacing && pacing.sms && pacing.sms.maxSegments) || 1;
-  // Message (prefix included) is over the allowed segment cap → block the blast.
-  const smsTooLong = isSms && messageTemplate.length > 0 && seg.segments > smsMaxSegments;
+  // Message (prefix + variables included) is over the allowed segment cap.
+  const smsTooLong = isSms && messageTemplate.length > 0 && smsSeg.segments > smsMaxSegments;
   const smsConfigured = !pacing || !pacing.sms || pacing.sms.configured !== false;
 
   return (
@@ -631,10 +655,11 @@ export default function NewCampaign() {
             {seg.bodyLen} characters
             {smsReserved > 0 ? ` + ${smsReserved} prepended = ${seg.totalLen}` : ''} · ~
             <span style={smsTooLong ? { color: '#ff7b72', fontWeight: 700 } : undefined}>
-              {seg.segments} SMS segment{seg.segments === 1 ? '' : 's'}
+              {smsSeg.segments} SMS segment{smsSeg.segments === 1 ? '' : 's'}
             </span>{' '}
             (max {smsMaxSegments})
-            {seg.unicode ? ' · contains non-GSM characters (shorter segments)' : ''}
+            {smsSampleBased ? ' · longest recipient, name filled in' : ''}
+            {smsSeg.unicode ? ' · contains non-GSM characters (shorter segments)' : ''}
           </div>
           {(smsPrepend || smsPrefixChars > 0) && (
             <div className="muted small" style={{ color: '#e3b341' }}>
@@ -656,8 +681,9 @@ export default function NewCampaign() {
           )}
           {smsTooLong && (
             <div className="alert error" style={{ marginTop: 8 }}>
-              ⚠ Message is too long — it needs <strong>{seg.segments} SMS segments</strong> (
-              {seg.totalLen} characters incl. the prefix), but the limit is{' '}
+              ⚠ Message is too long — it needs <strong>{smsSeg.segments} SMS segments</strong> (
+              {smsSeg.totalLen} characters incl. the prefix{smsSampleBased ? ' and the recipient’s name' : ''}), but the
+              limit is{' '}
               <strong>{smsMaxSegments === 1 ? '1 segment (160 characters)' : `${smsMaxSegments} segments`}</strong>.
               Shorten the message to send it.
             </div>

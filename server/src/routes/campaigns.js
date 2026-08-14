@@ -10,18 +10,17 @@ const { requireAuth } = require('../middleware/auth');
 const { resolveTmpUpload } = require('../middleware/upload');
 const { extractContacts, parseManual } = require('../services/fileParser');
 const { engineFor } = require('../services/campaignEngine');
-const { findNonLatin, smsSegments } = require('../services/smsText');
+const { findNonLatin, smsSegments, renderTemplate } = require('../services/smsText');
 
-// Characters the gateway/app prepend to every message, which count toward the
-// segment length: the "DCA: " identifier + the reserved sender-label chars.
-function smsReservedChars() {
-  return (config.sms.prepend ? config.sms.prepend.length : 0) + (config.sms.prefixChars || 0);
-}
+// Gateway sender-label chars reserved before the body (the "DCA: " identifier
+// is added to the rendered text itself, so it's counted there, not here).
+const smsGatewayPrefixChars = () => config.sms.prefixChars || 0;
 
-// Reject an SMS body that would exceed the configured segment cap (prefix
-// included). Keeps campaigns/templates within SMS_MAX_SEGMENTS.
+// Reject a raw SMS body (placeholders NOT expanded) that exceeds the segment
+// cap — used where there's no contact data (template save, blank-list checks).
 function assertSmsWithinSegments(text) {
-  const { segments, totalLen } = smsSegments(text, smsReservedChars());
+  const reserved = (config.sms.prepend ? config.sms.prepend.length : 0) + smsGatewayPrefixChars();
+  const { segments, totalLen } = smsSegments(text, reserved);
   const max = config.sms.maxSegments;
   if (segments > max) {
     throw new ApiError(
@@ -29,6 +28,33 @@ function assertSmsWithinSegments(text) {
       max === 1
         ? `Message is too long: ${totalLen} characters (prefix included) needs ${segments} SMS segments, but only 1 (160 characters) is allowed. Please shorten it.`
         : `Message is too long: ${totalLen} characters needs ${segments} SMS segments, but the limit is ${max}. Please shorten it.`
+    );
+  }
+}
+
+// Reject if the message would exceed the segment cap for ANY contact once
+// {name}/{amount} are filled in with that contact's real values. This is the
+// accurate check: a short template can still spill into a second segment for a
+// recipient with a long name. `contacts` is [{ name, amount }, …].
+function assertSmsFitsContacts(contacts, template) {
+  const max = config.sms.maxSegments;
+  const prefixChars = smsGatewayPrefixChars();
+  let worst = null;
+  for (const c of contacts) {
+    const rendered = config.sms.prepend + renderTemplate(template, { name: c.name, amount: c.amount });
+    const { segments, totalLen } = smsSegments(rendered, prefixChars);
+    if (!worst || segments > worst.segments || (segments === worst.segments && totalLen > worst.totalLen)) {
+      worst = { segments, totalLen, name: c.name };
+    }
+    if (worst.segments > max) break; // one over the limit is enough to reject
+  }
+  if (worst && worst.segments > max) {
+    const who = worst.name ? ` — e.g. for “${worst.name}”` : '';
+    throw new ApiError(
+      400,
+      max === 1
+        ? `With names/amounts filled in, at least one message would be ${worst.segments} SMS segments (${worst.totalLen} characters incl. the prefix)${who}, over the 1-segment (160 character) limit. Shorten the message.`
+        : `With names/amounts filled in, at least one message would be ${worst.segments} SMS segments${who}, over the ${max}-segment limit. Shorten the message.`
     );
   }
 }
@@ -191,7 +217,8 @@ router.post(
         throw new ApiError(400, 'SMS campaigns need message text');
       }
       assertLatinSms(d.messageTemplate);
-      assertSmsWithinSegments(d.messageTemplate);
+      // The segment-cap check needs the contact list (names/amounts change the
+      // real length), so it runs after contacts are parsed, below.
     } else {
       if (!d.audioFileId) throw new ApiError(400, 'Voice campaigns need an audio recording');
       const audio = await db.query(
@@ -246,6 +273,11 @@ router.post(
         throw new ApiError(400, 'No valid phone numbers found in the selected number column');
       }
     }
+
+    // Now that the real recipients are known, enforce the SMS segment cap using
+    // each contact's actual {name}/{amount} — a short template can still spill
+    // into an extra segment for someone with a long name.
+    if (isSms) assertSmsFitsContacts(contacts, d.messageTemplate);
 
     // SMS never retries; voice uses the requested (or default) retry settings.
     const maxAttempts = isSms ? 1 : d.maxAttempts || 1;
@@ -497,7 +529,14 @@ router.patch(
     }
     if (d.messageTemplate !== undefined) {
       assertLatinSms(d.messageTemplate);
-      assertSmsWithinSegments(d.messageTemplate);
+      // Check the segment cap against this campaign's real recipients. Fall back
+      // to the raw-template check if the list isn't seeded yet (draft).
+      const recipients = await db.query(
+        'SELECT name, amount FROM contacts WHERE campaign_id = :id',
+        { id: campaign.id }
+      );
+      if (recipients.length) assertSmsFitsContacts(recipients, d.messageTemplate);
+      else assertSmsWithinSegments(d.messageTemplate);
     }
 
     if (d.audioFileId !== undefined) {
