@@ -90,48 +90,20 @@ router.get(
     const summary = {};
     summaryRows.forEach((r) => (summary[r.status] = Number(r.n)));
 
-    // SMS billing: credits consumed (from delivery reports). The RM price per
-    // credit is admin-only (it's the reseller's rate) — regular users see just
-    // the credit count, never the Ringgit cost, so the price never leaves the
-    // server for a non-admin.
+    // SMS usage: credits consumed (from delivery reports), shown as a count.
     let sms = null;
     if (campaign.channel === 'sms') {
       const [{ credits }] = await db.query(
         "SELECT COALESCE(SUM(dlr_credits), 0) AS credits FROM call_logs WHERE campaign_id = :id AND status = 'sent'",
         { id: campaign.id }
       );
-      sms = {
-        credits: Number(credits),
-        creditPrice: req.user.role === 'admin' ? config.sms.creditPrice : null,
-      };
-    }
-
-    // Voice call cost (admin-only): answered calls billed in fixed time blocks,
-    // rounded up per call. blockSeconds/pricePerBlock let the UI show per-call
-    // cost too; `cost` is the campaign total. Hidden entirely from non-admins.
-    let voice = null;
-    if (campaign.channel !== 'sms' && req.user.role === 'admin') {
-      const block = config.voice.blockSeconds;
-      const [{ blocks }] = await db.query(
-        `SELECT COALESCE(SUM(CEIL(duration_sec / :block)), 0) AS blocks
-           FROM call_logs
-          WHERE campaign_id = :id AND answer_time IS NOT NULL AND duration_sec > 0`,
-        { id: campaign.id, block }
-      );
-      voice = {
-        blockSeconds: block,
-        pricePerBlock: config.voice.pricePerBlock,
-        pricePerBlockSen: config.voice.pricePerBlockSen,
-        blocks: Number(blocks),
-        cost: Number(blocks) * config.voice.pricePerBlock,
-      };
+      sms = { credits: Number(credits) };
     }
 
     res.json({
       campaign,
       summary,
       sms,
-      voice,
       labels: STATUS_LABEL,
       maxTotalDials: config.calls.maxTotalDials,
       page,
@@ -161,15 +133,11 @@ router.get(
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const isSms = campaign.channel === 'sms';
-    // Voice cost column is admin-only (reseller rate), same as the on-screen report.
-    const showVoiceCost = !isSms && req.user.role === 'admin';
-    const block = config.voice.blockSeconds;
-    const pricePerBlock = config.voice.pricePerBlock;
     // SMS reports carry the delivery-report columns; voice reports don't.
     res.write(
       isSms
         ? 'Name,Number,Status,Detail,Message ID,Delivery,Delivery Detail,Credits,Delivered/Updated At\n'
-        : `Name,Number,Status,Detail,Message ID,Attempts,Duration (s),Dialed At,Answered At,Ended At${showVoiceCost ? ',Cost (RM)' : ''}\n`
+        : 'Name,Number,Status,Detail,Message ID,Attempts,Duration (s),Dialed At,Answered At,Ended At\n'
     );
 
     // Keyset pagination keeps memory flat for very large lists.
@@ -209,15 +177,6 @@ router.get(
               esc(r.dial_start),
               esc(r.answer_time),
               esc(r.end_time),
-              ...(showVoiceCost
-                ? [
-                    esc(
-                      r.answer_time && r.duration_sec > 0
-                        ? (Math.ceil(r.duration_sec / block) * pricePerBlock).toFixed(3)
-                        : '0.000'
-                    ),
-                  ]
-                : []),
             ];
         res.write(cols.join(',') + '\n');
       }
@@ -300,8 +259,6 @@ router.get(
       campaign: { id: campaign.id, name: campaign.name, channel: campaign.channel, status: campaign.status },
       summary: await dlrSummary(campaign.id),
       pollSeconds: config.sms.dlrPollSeconds,
-      // Admin-only: the RM price per credit (reseller rate). Users see credits.
-      creditPrice: req.user.role === 'admin' ? config.sms.creditPrice : null,
       page,
       pageSize,
       total: Number(filteredTotal),

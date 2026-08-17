@@ -1,19 +1,18 @@
 'use strict';
 
 // ───────────────────────────────────────────────────────────────────────────
-// SMS usage / cost report (CLI, admin-only backend tool).
+// SMS usage report (CLI, backend tool).
 //
 //   npm run sms-usage -- [options]
 //
-// Totals up SMS credits consumed (from the stored delivery reports) and the
-// cost, so you can see spend without opening the app. By default it reports
-// ALL sent SMS, all-time. Options narrow it down:
+// Totals up SMS credits consumed (from the stored delivery reports) so you can
+// see usage without opening the app. By default it reports ALL sent SMS,
+// all-time. Options narrow it down:
 //
 //   --from YYYY-MM-DD     only messages sent on/after this date
 //   --to   YYYY-MM-DD     only messages sent on/before this date (inclusive)
 //   --campaign <id>       only this campaign
 //   --user <username>     only campaigns owned by this user
-//   --price <RM>          price per credit in RM (default: SMS_CREDIT_PRICE)
 //   --by-campaign         also print a per-campaign breakdown
 //   --refresh             first pull credits from the gateway for any sent
 //                         messages that don't have a delivery report yet
@@ -31,7 +30,7 @@ const smsProvider = require('../src/services/smsProvider');
 
 // Tiny arg parser: "--key value" for known value-flags, "--flag" for booleans.
 function parseArgs(argv) {
-  const valueKeys = new Set(['from', 'to', 'campaign', 'user', 'price']);
+  const valueKeys = new Set(['from', 'to', 'campaign', 'user']);
   const out = {};
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
@@ -47,7 +46,6 @@ function parseArgs(argv) {
   return out;
 }
 
-const rm = (n) => `RM ${Number(n).toFixed(2)}`;
 const int = (n) => Number(n).toLocaleString();
 
 // Build the shared WHERE clause + params from the filters.
@@ -112,11 +110,6 @@ async function refreshMissing(whereSql, params) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const price = args.price != null ? Number(args.price) : config.sms.creditPrice;
-  if (!Number.isFinite(price) || price < 0) {
-    console.error(`Invalid --price: ${args.price}`);
-    process.exit(1);
-  }
   const { whereSql, params } = buildFilter(args);
 
   if (args.refresh) {
@@ -144,11 +137,9 @@ async function main() {
   const reported = Number(t.reported);
   const credits = Number(t.credits);
   const pending = Number(t.pending);
-  const cost = credits * price;
-  // Estimate the still-unreported spend from the average of what we do know.
+  // Estimate the still-unreported credits from the average of what we do know.
   const avgPerMsg = reported > 0 ? credits / reported : 0;
   const estCredits = credits + Math.round(pending * avgPerMsg);
-  const estCost = estCredits * price;
 
   const scope = [];
   if (args.campaign) scope.push(`campaign ${args.campaign}`);
@@ -164,12 +155,9 @@ async function main() {
   console.log(`    · failed               : ${int(t.failed)}`);
   console.log(`    · pending report       : ${int(pending)}`);
   console.log('  ----------------------------------------------');
-  console.log(`  Price per credit         : ${rm(price)}`);
   console.log(`  Credits used (reported)  : ${int(credits)}`);
-  console.log(`  COST (reported)          : ${rm(cost)}`);
   if (pending > 0 && avgPerMsg > 0) {
-    console.log('  ----------------------------------------------');
-    console.log(`  Est. incl. ${int(pending)} unreported : ~${int(estCredits)} credits  ≈ ${rm(estCost)}`);
+    console.log(`  Est. incl. ${int(pending)} unreported : ~${int(estCredits)} credits`);
     console.log(`    (assuming ${avgPerMsg.toFixed(2)} credits/msg, the reported average)`);
   }
   console.log('════════════════════════════════════════════════');
@@ -188,14 +176,13 @@ async function main() {
       params
     );
     console.log('\n  Per campaign:');
-    console.log('  ' + 'ID'.padEnd(7) + 'Sent'.padStart(8) + 'Credits'.padStart(10) + 'Cost'.padStart(12) + '  Name');
+    console.log('  ' + 'ID'.padEnd(7) + 'Sent'.padStart(8) + 'Credits'.padStart(10) + '  Name');
     for (const r of rows) {
       console.log(
         '  ' +
           String(r.id).padEnd(7) +
           int(r.sent).padStart(8) +
           int(r.credits).padStart(10) +
-          rm(Number(r.credits) * price).padStart(12) +
           `  ${r.name}${r.owner ? ` (${r.owner})` : ''}`
       );
     }

@@ -80,13 +80,6 @@ export default function Reports() {
   const headline = isSms ? HEADLINE_SMS : HEADLINE;
   const other = isSms ? OTHER_SMS : OTHER;
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
-  // Voice cost column/summary appear only when the server sent `voice` (admins).
-  const voice = !isSms ? data?.voice : null;
-  // Per-call cost: answered calls billed per started block, rounded up.
-  const callCost = (r) =>
-    voice && r.answer_time && r.duration_sec > 0
-      ? Math.ceil(r.duration_sec / voice.blockSeconds) * voice.pricePerBlock
-      : 0;
 
   return (
     <div>
@@ -152,32 +145,9 @@ export default function Reports() {
               </div>
             ))}
             {isSms && data.sms && data.sms.credits > 0 && (
-              data.sms.creditPrice != null ? (
-                // Admin: the Ringgit cost (reseller rate).
-                <div
-                  className="summary-card"
-                  title={`${data.sms.credits.toLocaleString()} credits @ RM ${data.sms.creditPrice.toFixed(2)} each`}
-                >
-                  <div className="num">RM {(data.sms.credits * data.sms.creditPrice).toFixed(2)}</div>
-                  <div className="muted small">Cost ({data.sms.credits.toLocaleString()} credits)</div>
-                </div>
-              ) : (
-                // Regular user: credits consumed, no Ringgit amount.
-                <div className="summary-card">
-                  <div className="num">{data.sms.credits.toLocaleString()}</div>
-                  <div className="muted small">Credits used</div>
-                </div>
-              )
-            )}
-            {voice && voice.cost > 0 && (
-              <div
-                className="summary-card"
-                title={`Answered calls billed at ${voice.pricePerBlockSen} sen per ${voice.blockSeconds}s block, rounded up per call`}
-              >
-                <div className="num">RM {voice.cost.toFixed(2)}</div>
-                <div className="muted small">
-                  Cost (@ {voice.pricePerBlockSen} sen / {voice.blockSeconds}s)
-                </div>
+              <div className="summary-card">
+                <div className="num">{data.sms.credits.toLocaleString()}</div>
+                <div className="muted small">Credits used</div>
               </div>
             )}
           </div>
@@ -235,11 +205,6 @@ export default function Reports() {
                     Attempt
                   </th>
                 )}
-                {voice && (
-                  <th title={`Answered calls billed at ${voice.pricePerBlockSen} sen per ${voice.blockSeconds}s block, rounded up`}>
-                    Cost
-                  </th>
-                )}
               </tr>
             </thead>
             <tbody>
@@ -263,16 +228,11 @@ export default function Reports() {
                       {data.campaign?.max_attempts > 1 ? ` / ${data.campaign.max_attempts}` : ''}
                     </td>
                   )}
-                  {voice && (
-                    <td className="muted small">
-                      {r.answer_time && r.duration_sec > 0 ? `RM ${callCost(r).toFixed(3)}` : '—'}
-                    </td>
-                  )}
                 </tr>
               ))}
               {data.rows.length === 0 && (
                 <tr>
-                  <td colSpan={isSms ? 4 : voice ? 6 : 5} className="muted">
+                  <td colSpan={isSms ? 4 : 5} className="muted">
                     No matching {isSms ? 'messages' : 'calls'}.
                   </td>
                 </tr>
