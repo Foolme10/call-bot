@@ -163,12 +163,16 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
    users' campaigns), so JUST this table breaks out of the shared 1360px content
    width to use most of the screen — giving the columns room to breathe. Regular
    users keep the standard width. Tighter padding + ellipsis keep it tidy. */
-.table-wrap.wide-admin {
+/* Admin Campaigns view: widen the whole block (header + filters + table
+   together) so they share edges and line up. Only wraps the non-modal content,
+   so the transform never becomes a containing block for the fixed modals. */
+.campaigns-wide {
   width: min(1720px, 97vw);
   margin-left: 50%;
   transform: translateX(-50%);
 }
-.table-wrap.wide-admin .table th { position: static; } /* sticky misbehaves inside a transform */
+.campaigns-wide .table th { position: static; } /* sticky misbehaves inside a transform */
+.filter-divider { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--border); }
 .table.table-tight th, .table.table-tight td { padding: 10px 12px; }
 .cell-ellip { display: inline-block; max-width: 160px; overflow: hidden;
               text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }

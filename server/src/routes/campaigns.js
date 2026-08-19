@@ -139,6 +139,12 @@ router.get(
       conds.push(`c.status IN (${group.map((_, i) => `:cs${i}`).join(',')})`);
       group.forEach((s, i) => (params[`cs${i}`] = s));
     }
+
+    // Optional channel filter (voice vs SMS) for the Campaigns page tabs.
+    if (req.query.channel === 'sms' || req.query.channel === 'voice') {
+      conds.push('c.channel = :chan');
+      params.chan = req.query.channel;
+    }
     const scope = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
 
     const [{ n: total }] = await db.query(

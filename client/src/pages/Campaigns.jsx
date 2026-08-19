@@ -63,6 +63,7 @@ export default function Campaigns() {
   const [rerunStatuses, setRerunStatuses] = useState(RERUN_DEFAULT); // chosen outcomes for 'unreached'
   const [isAdmin, setIsAdmin] = useState(false); // support super-user: sees all users' campaigns
   const [filter, setFilter] = useState('all'); // all | active | scheduled | completed
+  const [channelFilter, setChannelFilter] = useState('all'); // all | voice | sms
   // Live edit (change caller ID / recording / message on a running or paused campaign)
   const [liveEditFor, setLiveEditFor] = useState(null);
   const [liveCallerId, setLiveCallerId] = useState('');
@@ -76,6 +77,7 @@ export default function Campaigns() {
     try {
       const params = new URLSearchParams({ page: p, pageSize: PAGE_SIZE });
       if (filter !== 'all') params.set('status', filter);
+      if (channelFilter !== 'all') params.set('channel', channelFilter);
       const d = await api.get(`/campaigns?${params}`);
       setCampaigns(d.campaigns);
       setTotal(d.total || d.campaigns.length);
@@ -91,7 +93,7 @@ export default function Campaigns() {
     load(page);
     const t = setInterval(() => load(page), 5000); // keep counts/status fresh
     return () => clearInterval(t);
-  }, [page, filter]);
+  }, [page, filter, channelFilter]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -200,6 +202,9 @@ export default function Campaigns() {
 
   return (
     <div>
+      {/* Header, filters and table share one width so they line up for both
+          roles; admins get a wider block for the extra Owner column + volume. */}
+      <div className={isAdmin ? 'campaigns-wide' : ''}>
       <div className="page-head">
         <h2>Campaigns</h2>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -230,6 +235,23 @@ export default function Campaigns() {
             {label}
           </button>
         ))}
+        <span className="filter-divider" aria-hidden="true" />
+        {[
+          ['all', 'All types'],
+          ['voice', '📞 Voice'],
+          ['sms', '💬 SMS'],
+        ].map(([k, label]) => (
+          <button
+            key={k}
+            className={`btn small ${channelFilter === k ? 'primary' : 'ghost'}`}
+            onClick={() => {
+              setPage(1);
+              setChannelFilter(k);
+            }}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {error && <div className="alert error">{error}</div>}
@@ -240,7 +262,7 @@ export default function Campaigns() {
           {filter === 'all' ? 'No campaigns yet. Create your first one.' : `No ${filter} campaigns.`}
         </div>
       ) : (
-        <div className={`table-wrap${isAdmin ? ' wide-admin' : ''}`}>
+        <div className="table-wrap">
         <table className={`table${isAdmin ? ' table-tight' : ''}`}>
           <thead>
             <tr>
@@ -286,7 +308,14 @@ export default function Campaigns() {
                   )}
                   {c.rerun_scope && (
                     <div className="muted small" style={{ marginTop: 4 }}>
-                      ↻ {['running', 'paused'].includes(c.status) ? 'Redialing' : 'Redialed'}{' '}
+                      ↻{' '}
+                      {c.channel === 'sms'
+                        ? ['running', 'paused'].includes(c.status)
+                          ? 'Resending'
+                          : 'Resent'
+                        : ['running', 'paused'].includes(c.status)
+                        ? 'Redialing'
+                        : 'Redialed'}{' '}
                       {c.rerun_scope === 'all' ? 'all numbers' : 'unreached'}
                     </div>
                   )}
@@ -341,13 +370,18 @@ export default function Campaigns() {
                       (c.redial_count >= MAX_REDIALS ? (
                         <span
                           className="muted small"
-                          title="Create a new campaign to dial these numbers again"
+                          title={
+                            c.channel === 'sms'
+                              ? 'Create a new campaign to send to these numbers again'
+                              : 'Create a new campaign to dial these numbers again'
+                          }
                         >
-                          Redial limit reached
+                          {c.channel === 'sms' ? 'Resend' : 'Redial'} limit reached
                         </span>
                       ) : (
                         <button className="btn small ok" onClick={() => openRerun(c)}>
-                          Redial{c.redial_count > 0 ? ` (${c.redial_count}/${MAX_REDIALS})` : ''}
+                          {c.channel === 'sms' ? 'Resend' : 'Redial'}
+                          {c.redial_count > 0 ? ` (${c.redial_count}/${MAX_REDIALS})` : ''}
                         </button>
                       ))}
                     <button
@@ -387,6 +421,7 @@ export default function Campaigns() {
           </button>
         </div>
       )}
+      </div>
 
       {detail && (
         <div className="modal-backdrop" onClick={() => setDetail(null)}>
