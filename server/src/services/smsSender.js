@@ -5,6 +5,17 @@ const logger = require('../logger');
 const db = require('../db');
 const monitor = require('../ws/monitor');
 const smsProvider = require('./smsProvider');
+const creditService = require('./creditService');
+const { smsSegments } = require('./smsText');
+
+// The real message a recipient gets (prepend + rendered template) and how many
+// SMS credits it costs (gateway sender-label prefix included, no composer
+// safety cushion — that's only for blocking over-long templates, not billing).
+function messageFor(template, row) {
+  const content = config.sms.prepend + renderTemplate(template, { name: row.name, amount: row.amount });
+  const { segments } = smsSegments(content, config.sms.prefixChars || 0);
+  return { content, credits: Math.max(1, segments) };
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // SMS broadcasting engine. Mirrors dialer.js's lifecycle interface
@@ -76,6 +87,11 @@ class SmsRunner {
     this.autoStopThreshold = config.sms.autoStopFailures;
     this.consecutiveFailures = 0;
     this.aborted = false;
+    // Prepaid credit wallet. User-owned campaigns spend the owner's wallet;
+    // admin-owned campaigns are not gated (the vendor draws from the pool).
+    this.ownerId = campaign.user_id || null;
+    this.walletGated = (campaign.owner_role || 'user') === 'user';
+    this.creditsSpent = 0; // net credits charged this run (for the spend ledger)
   }
 
   start() {
@@ -114,12 +130,38 @@ class SmsRunner {
           break;
         }
         this.tokens -= 1;
+        // Render the message + its credit cost once, reuse in deliver().
+        const msg = messageFor(this.template, row);
+        row._content = msg.content;
+        row._credits = msg.credits;
+        // Prepaid: debit the owner's wallet BEFORE sending. If it can't cover
+        // this message, stop the campaign (the row stays 'queued' — it wasn't
+        // reserved — so a later top-up + redial resumes exactly here).
+        if (this.walletGated) {
+          const paid = await creditService.charge(this.ownerId, msg.credits);
+          if (!paid) {
+            if (!this.aborted) {
+              this.aborted = true;
+              this.pause();
+              abortCampaign(
+                this.id,
+                "Out of SMS credits. Ask the administrator to top up the account's balance, then redial the remaining messages."
+              ).catch((e) => logger.error(`SMS credit auto-stop ${this.id}:`, e.message));
+            }
+            break;
+          }
+          this.creditsSpent += msg.credits;
+        }
         // Reserve the row synchronously (so a concurrent re-select can't grab
         // it) BEFORE counting it in flight. If the reserve itself errors, the
-        // row stays queued and no counter leaks — skip it and move on.
+        // row stays queued and no counter leaks — refund the charge and skip.
         try {
           await this.reserve(row);
         } catch (e) {
+          if (this.walletGated) {
+            await creditService.refund(this.ownerId, msg.credits).catch(() => {});
+            this.creditsSpent -= msg.credits;
+          }
           logger.error(`SMS reserve ${row.id} failed:`, e.message);
           continue;
         }
@@ -197,11 +239,17 @@ class SmsRunner {
   async deliver(row) {
     const attempt = (row.attempts || 0) + 1;
     const totalDials = (row.total_dials || 0) + 1;
+    // Credits already debited at reserve time; keep them only if the gateway
+    // accepts the message, otherwise refund in the finally.
+    const charged = this.walletGated ? row._credits || 0 : 0;
+    let keepCharge = false;
     try {
-      // Every message goes out with the configured identifier (e.g. "DCA: ")
-      // prepended — enforced here so no send can omit it.
-      const content = config.sms.prepend + renderTemplate(this.template, { name: row.name, amount: row.amount });
+      // Content was rendered (with the "DCA: "/prepend identifier) at reserve
+      // time; reuse it so the billed segments match what's actually sent.
+      const content =
+        row._content || config.sms.prepend + renderTemplate(this.template, { name: row.name, amount: row.amount });
       const result = await smsProvider.sendSms({ to: row.phone, content });
+      if (result.ok) keepCharge = true; // gateway accepted → the credit is real
 
       // Every outcome write is guarded by `status = 'dialing'` so it only lands
       // on the row THIS run reserved. If a stop+rerun (or restart) has since
@@ -280,6 +328,12 @@ class SmsRunner {
       );
       if (r.affectedRows > 0) this.publishOutcome(row, 'failed', attempt);
     } finally {
+      // Message wasn't accepted → the gateway didn't charge, so return the
+      // credits we optimistically debited at reserve time.
+      if (charged && !keepCharge) {
+        creditService.refund(this.ownerId, charged).catch(() => {});
+        this.creditsSpent -= charged;
+      }
       this.inFlight -= 1;
       globalInFlight = Math.max(0, globalInFlight - 1);
       this.pump();
@@ -304,8 +358,32 @@ class SmsRunner {
 // Campaign lifecycle (same shape as dialer.js)
 // ───────────────────────────────────────────────────────────────────────────
 async function loadCampaignRow(campaignId) {
-  const rows = await db.query('SELECT * FROM campaigns WHERE id = :id', { id: campaignId });
+  const rows = await db.query(
+    `SELECT c.*, u.role AS owner_role
+       FROM campaigns c LEFT JOIN users u ON u.id = c.user_id
+      WHERE c.id = :id`,
+    { id: campaignId }
+  );
   return rows[0] || null;
+}
+
+// Estimated credits a user-owned campaign needs: the still-to-send recipients ×
+// this message's credit cost (using a representative recipient). Used to block
+// a campaign the wallet clearly can't afford before it starts; the per-message
+// charge is the exact, authoritative enforcement.
+async function estimateCredits(campaign) {
+  const [{ n }] = await db.query(
+    "SELECT COUNT(*) AS n FROM call_logs WHERE campaign_id = :id AND status = 'queued'",
+    { id: campaign.id }
+  );
+  const recipients = Number(n);
+  if (recipients === 0) return 0;
+  const [sample] = await db.query(
+    "SELECT name, amount FROM call_logs WHERE campaign_id = :id AND status = 'queued' LIMIT 1",
+    { id: campaign.id }
+  );
+  const perMsg = messageFor(campaign.message_template || '', sample || {}).credits;
+  return recipients * perMsg;
 }
 
 // Seed call_logs from contacts the first time a campaign runs. Carries the
@@ -333,6 +411,21 @@ async function startCampaign(campaignId) {
   }
 
   await ensureSendLogs(campaignId);
+
+  // Prepaid gate: a user-owned campaign can't start unless the owner's wallet
+  // can (roughly) cover it. Admin-owned campaigns are not gated.
+  if ((campaign.owner_role || 'user') === 'user' && campaign.user_id) {
+    const need = await estimateCredits(campaign);
+    const have = await creditService.getUserBalance(campaign.user_id);
+    if (need > have) {
+      const err = new Error(
+        `Not enough SMS credits: this campaign needs about ${need.toLocaleString()} credit(s) but the account has ${have.toLocaleString()}. Ask the administrator to top up the balance.`
+      );
+      err.status = 400;
+      throw err;
+    }
+  }
+
   await db.execute(
     `UPDATE campaigns
         SET status = 'running', stop_reason = NULL,
@@ -423,10 +516,20 @@ async function refreshCampaign(campaignId) {
   logger.info(`SMS campaign ${campaignId} runner refreshed (message updated)`);
 }
 
+// Write one summary 'spend' ledger row for what this run charged (the wallet
+// was already debited per-message; this is the audit trail). Resets the tally.
+function flushSpend(runner, campaignId, note) {
+  if (runner && runner.walletGated && runner.creditsSpent > 0) {
+    creditService.recordSpend(runner.ownerId, campaignId, runner.creditsSpent, note);
+    runner.creditsSpent = 0;
+  }
+}
+
 async function stopCampaign(campaignId) {
   const runner = runners.get(campaignId);
   if (runner) {
     runner.pause();
+    flushSpend(runner, campaignId, 'Campaign stopped');
     runners.delete(campaignId);
   }
   await db.execute(
@@ -443,6 +546,7 @@ async function abortCampaign(campaignId, reason) {
   const runner = runners.get(campaignId);
   if (runner) {
     runner.pause();
+    flushSpend(runner, campaignId, 'Campaign auto-stopped');
     runners.delete(campaignId);
   }
   const msg = String(reason || 'Gateway error').slice(0, 255);
@@ -458,6 +562,7 @@ async function finalizeCampaign(campaignId, status) {
   const runner = runners.get(campaignId);
   if (runner) {
     runner.pause();
+    flushSpend(runner, campaignId, `Campaign ${status}`);
     runners.delete(campaignId);
   }
   await db.execute(
@@ -504,6 +609,9 @@ async function start() {
       await startCampaign(c.id);
     } catch (e) {
       logger.error(`Could not resume SMS campaign ${c.id}:`, e.message);
+      // Don't leave it stuck 'running' with no runner — stop it with the reason
+      // (e.g. the owner's wallet was drained while it was down) so it's clear.
+      await abortCampaign(c.id, `Could not resume: ${e.message}`).catch(() => {});
     }
   }
 

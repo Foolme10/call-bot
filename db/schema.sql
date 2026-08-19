@@ -15,9 +15,49 @@ CREATE TABLE IF NOT EXISTS users (
   full_name      VARCHAR(128) NULL,
   role           ENUM('admin','user') NOT NULL DEFAULT 'user',
   is_active      TINYINT(1)   NOT NULL DEFAULT 1,
+  -- Prepaid SMS credit wallet. Admin allocates credits from the company pool
+  -- into a user's wallet; sending SMS draws it down. Admins are not gated.
+  credit_balance BIGINT NOT NULL DEFAULT 0,
   created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_users_username (username)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
+-- Company SMS credit pool (single row). The vendor tops this up to reflect
+-- credits bought from the gateway; the admin allocates from it into user
+-- wallets. Kept as an explicit balance (updated inside transactions alongside
+-- the ledger) rather than recomputed from history.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS credit_pool (
+  id       TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  balance  BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+INSERT IGNORE INTO credit_pool (id, balance) VALUES (1, 0);
+
+-- ---------------------------------------------------------------------------
+-- Credit ledger: an audit trail of every credit movement.
+--   topup      pool balance increased (vendor recorded a purchase)
+--   allocate   pool → a user's wallet
+--   deallocate a user's wallet → pool (claw-back)
+--   spend      a campaign consumed a user's credits (summary at finish)
+--   refund     credits returned to a user (e.g. a stopped campaign)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS credit_transactions (
+  id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  kind        ENUM('topup','allocate','deallocate','spend','refund') NOT NULL,
+  user_id     BIGINT UNSIGNED NULL,   -- the wallet affected (NULL for pure pool top-ups)
+  campaign_id BIGINT UNSIGNED NULL,   -- set for spend/refund
+  amount      BIGINT NOT NULL,        -- always positive; `kind` gives the direction
+  note        VARCHAR(255) NULL,
+  actor_id    BIGINT UNSIGNED NULL,   -- who performed it (admin for topup/allocate)
+  created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_credittx_user (user_id, id),
+  KEY idx_credittx_kind (kind, id),
+  CONSTRAINT fk_credittx_user  FOREIGN KEY (user_id)  REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_credittx_actor FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------------

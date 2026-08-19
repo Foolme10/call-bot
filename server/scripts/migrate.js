@@ -69,6 +69,11 @@ async function main() {
     return r[0] ? r[0].t.includes(`'${value}'`) : false;
   };
 
+  // Prepaid SMS credit wallet (the credit_pool + credit_transactions tables and
+  // the pool seed row come from schema.sql above; this adds the users column on
+  // databases that predate it).
+  await ensureColumn('users', 'credit_balance', 'credit_balance BIGINT NOT NULL DEFAULT 0 AFTER is_active');
+
   // Redial / multi-attempt columns.
   await ensureColumn('campaigns', 'max_attempts', 'max_attempts TINYINT UNSIGNED NOT NULL DEFAULT 1 AFTER max_concurrent');
   await ensureColumn('campaigns', 'retry_delay_min', 'retry_delay_min INT UNSIGNED NOT NULL DEFAULT 0 AFTER max_attempts');
