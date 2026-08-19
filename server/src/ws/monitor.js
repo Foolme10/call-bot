@@ -4,7 +4,7 @@ const { WebSocketServer } = require('ws');
 const url = require('url');
 const logger = require('../logger');
 const db = require('../db');
-const { verifyToken } = require('../middleware/auth');
+const { verifyToken, isAdminLevel } = require('../middleware/auth');
 
 // Real-time fan-out for the monitoring tab.
 // Clients connect to ws://host/ws/monitor?token=<JWT>, then send
@@ -57,7 +57,7 @@ async function onMessage(ws, data) {
     // live feed carries recipient names + phone numbers, so this must match the
     // same ownership rule the REST endpoints enforce.
     const id = Number(msg.campaignId);
-    if (state.role === 'admin') {
+    if (isAdminLevel(state.role)) {
       state.campaigns.add(id);
       return;
     }

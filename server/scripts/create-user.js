@@ -2,7 +2,8 @@
 
 // Create (or update) a login. Usage:
 //   npm run create-user -- <username> <password> [fullName] [role]
-// role defaults to "user"; pass "admin" for an admin account.
+// role defaults to "user"; pass "admin" for an admin account, or "vendor" for
+// the top tier (can top up the credit pool).
 // Re-running with an existing username updates that user's password/role.
 
 const bcrypt = require('bcryptjs');
@@ -14,7 +15,7 @@ async function main() {
     console.error('Usage: npm run create-user -- <username> <password> [fullName] [role]');
     process.exit(1);
   }
-  const role = roleArg === 'admin' ? 'admin' : 'user';
+  const role = ['admin', 'vendor'].includes(roleArg) ? roleArg : 'user';
   const hash = await bcrypt.hash(password, 10);
 
   await db.execute(

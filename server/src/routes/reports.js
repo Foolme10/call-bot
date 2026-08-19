@@ -5,7 +5,7 @@ const db = require('../db');
 const config = require('../config');
 const dlrPoller = require('../services/dlrPoller');
 const { ApiError, asyncHandler } = require('../http');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, isAdminLevel } = require('../middleware/auth');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -27,7 +27,7 @@ const STATUS_LABEL = {
 // Admins (the 'support' super-user) can report on any campaign; others only
 // their own.
 async function assertOwned(campaignId, user) {
-  const isAdmin = user.role === 'admin';
+  const isAdmin = isAdminLevel(user.role);
   const rows = await db.query(
     `SELECT id, name, status, rerun_scope, max_attempts, channel, stop_reason FROM campaigns WHERE id = :id ${isAdmin ? '' : 'AND user_id = :uid'}`,
     { id: campaignId, uid: user.id }

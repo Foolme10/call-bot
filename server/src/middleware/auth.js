@@ -34,4 +34,18 @@ function requireRole(role) {
   };
 }
 
-module.exports = { requireAuth, requireRole, verifyToken };
+// "Admin-level" = admin OR vendor. Both are staff: they see every user's
+// campaigns/reports and manage wallets. Only vendor can additionally top up
+// the pool (guard that with requireRole('vendor')).
+function isAdminLevel(role) {
+  return role === 'admin' || role === 'vendor';
+}
+
+function requireAdminLevel(req, _res, next) {
+  if (!req.user || !isAdminLevel(req.user.role)) {
+    return next(new ApiError(403, 'Insufficient permissions'));
+  }
+  return next();
+}
+
+module.exports = { requireAuth, requireRole, requireAdminLevel, isAdminLevel, verifyToken };

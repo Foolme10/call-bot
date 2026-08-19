@@ -73,6 +73,13 @@ async function main() {
   // the pool seed row come from schema.sql above; this adds the users column on
   // databases that predate it).
   await ensureColumn('users', 'credit_balance', 'credit_balance BIGINT NOT NULL DEFAULT 0 AFTER is_active');
+  // Add the 'vendor' role (top tier: can top up the credit pool) on older DBs.
+  if (!(await enumHasValue('users', 'role', 'vendor'))) {
+    await conn.query(
+      "ALTER TABLE `users` MODIFY COLUMN role ENUM('vendor','admin','user') NOT NULL DEFAULT 'user'"
+    );
+    console.log("  + users.role enum value 'vendor'");
+  }
 
   // Redial / multi-attempt columns.
   await ensureColumn('campaigns', 'max_attempts', 'max_attempts TINYINT UNSIGNED NOT NULL DEFAULT 1 AFTER max_concurrent');

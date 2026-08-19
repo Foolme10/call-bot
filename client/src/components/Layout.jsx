@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../auth.jsx';
 import { api } from '../api.js';
+import { isAdminLevel } from '../roles.js';
 
 const tabs = [
   { to: '/campaigns', label: 'Campaigns' },
@@ -16,17 +17,17 @@ export default function Layout() {
   const { user, logout } = useAuth();
   const [balance, setBalance] = useState(null); // regular user's SMS credit balance
 
-  // Show the SMS credit balance in the header. Admins manage the pool on the
-  // Credits page, so the badge is for regular users; refresh it periodically.
+  // Show the SMS credit balance in the header. Admin/vendor manage the pool on
+  // the Credits page, so the badge is for regular users; refresh periodically.
   useEffect(() => {
-    if (!user || user.role === 'admin') return undefined;
+    if (!user || isAdminLevel(user.role)) return undefined;
     const load = () => api.get('/credits/me').then((d) => setBalance(d.balance)).catch(() => {});
     load();
     const t = setInterval(load, 15000);
     return () => clearInterval(t);
   }, [user]);
 
-  const visibleTabs = tabs.filter((t) => !t.admin || user?.role === 'admin');
+  const visibleTabs = tabs.filter((t) => !t.admin || isAdminLevel(user?.role));
 
   return (
     <div className="app">
@@ -40,7 +41,7 @@ export default function Layout() {
           ))}
         </nav>
         <div className="user">
-          {user?.role !== 'admin' && balance != null && (
+          {!isAdminLevel(user?.role) && balance != null && (
             <span className="badge info" title="Your SMS credit balance">
               💬 {Number(balance).toLocaleString()} credits
             </span>

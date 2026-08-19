@@ -13,7 +13,10 @@ CREATE TABLE IF NOT EXISTS users (
   username       VARCHAR(64)  NOT NULL,
   password_hash  VARCHAR(255) NOT NULL,
   full_name      VARCHAR(128) NULL,
-  role           ENUM('admin','user') NOT NULL DEFAULT 'user',
+  -- vendor: top of the tree — can top up the credit pool and see everything.
+  -- admin: sees everything and allocates credits to users, but can't top up.
+  -- user: sends campaigns, spending their allocated wallet.
+  role           ENUM('vendor','admin','user') NOT NULL DEFAULT 'user',
   is_active      TINYINT(1)   NOT NULL DEFAULT 1,
   -- Prepaid SMS credit wallet. Admin allocates credits from the company pool
   -- into a user's wallet; sending SMS draws it down. Admins are not gated.

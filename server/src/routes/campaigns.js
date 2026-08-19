@@ -6,7 +6,7 @@ const { z } = require('zod');
 const db = require('../db');
 const config = require('../config');
 const { ApiError, asyncHandler } = require('../http');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, isAdminLevel } = require('../middleware/auth');
 const { resolveTmpUpload } = require('../middleware/upload');
 const { extractContacts, parseManual } = require('../services/fileParser');
 const { engineFor } = require('../services/campaignEngine');
@@ -103,7 +103,7 @@ router.get('/meta/pace', (req, res) => {
 // Fetch a campaign the requester is allowed to touch. Admins (the 'support'
 // super-user) can reach every campaign; everyone else only their own.
 async function getOwnedCampaign(id, user) {
-  const isAdmin = user.role === 'admin';
+  const isAdmin = isAdminLevel(user.role);
   const rows = await db.query(
     `SELECT * FROM campaigns WHERE id = :id ${isAdmin ? '' : 'AND user_id = :uid'}`,
     { id, uid: user.id }
@@ -123,7 +123,7 @@ router.get(
 
     // Admins (the 'support' super-user) see every user's campaigns; others only
     // their own. `owner` is exposed so an admin can tell whose campaign it is.
-    const isAdmin = req.user.role === 'admin';
+    const isAdmin = isAdminLevel(req.user.role);
     const conds = [];
     const params = { uid: req.user.id, limit: pageSize, offset };
     if (!isAdmin) conds.push('c.user_id = :uid');

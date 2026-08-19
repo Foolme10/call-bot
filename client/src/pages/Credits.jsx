@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
+import { isAdminLevel, isVendor } from '../roles.js';
 
 // Admin-only credit management: top up the company pool, allocate credits into
 // user wallets, and reclaim unused ones. The pool reflects credits you've
@@ -36,9 +37,10 @@ export default function Credits() {
     load();
   }, []);
 
-  if (user?.role !== 'admin') {
+  if (!isAdminLevel(user?.role)) {
     return <div className="empty">This page is for administrators only.</div>;
   }
+  const canTopUp = isVendor(user?.role); // only the vendor tops up the pool
 
   async function doTopup(e) {
     e.preventDefault();
@@ -110,32 +112,39 @@ export default function Credits() {
         </div>
       </div>
 
-      <section className="card" style={{ marginBottom: 16 }}>
-        <h3>Top up the pool</h3>
-        <p className="muted small">
-          Enter how many credits you’ve bought from the SMS gateway to add them to the pool, then
-          allocate them to users below.
-        </p>
-        <form onSubmit={doTopup} className="row" style={{ alignItems: 'flex-end', gap: 12 }}>
-          <div>
-            <label>Credits to add</label>
-            <input
-              type="number"
-              min="1"
-              value={topupAmount}
-              onChange={(e) => setTopupAmount(e.target.value)}
-              placeholder="e.g. 100000"
-            />
-          </div>
-          <div style={{ flex: 1 }}>
-            <label>Note (optional)</label>
-            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. nxsip invoice #123" />
-          </div>
-          <button className="btn primary" disabled={busy}>
-            Add to pool
-          </button>
-        </form>
-      </section>
+      {canTopUp ? (
+        <section className="card" style={{ marginBottom: 16 }}>
+          <h3>Top up the pool</h3>
+          <p className="muted small">
+            Enter how many credits you’ve bought from the SMS gateway to add them to the pool, then
+            allocate them to users below.
+          </p>
+          <form onSubmit={doTopup} className="row" style={{ alignItems: 'flex-end', gap: 12 }}>
+            <div>
+              <label>Credits to add</label>
+              <input
+                type="number"
+                min="1"
+                value={topupAmount}
+                onChange={(e) => setTopupAmount(e.target.value)}
+                placeholder="e.g. 100000"
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label>Note (optional)</label>
+              <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. nxsip invoice #123" />
+            </div>
+            <button className="btn primary" disabled={busy}>
+              Add to pool
+            </button>
+          </form>
+        </section>
+      ) : (
+        <div className="alert info" style={{ marginBottom: 16 }}>
+          Only the <strong>vendor</strong> can top up the pool. You can allocate the available pool
+          credits to users below.
+        </div>
+      )}
 
       <section className="card" style={{ marginBottom: 16 }}>
         <h3>User wallets</h3>
@@ -154,9 +163,9 @@ export default function Credits() {
                 <tr key={u.id}>
                   <td>{u.full_name || u.username}<div className="muted small">{u.username}</div></td>
                   <td>
-                    <span className={`badge ${u.role === 'admin' ? 'info' : ''}`}>{u.role}</span>
+                    <span className={`badge ${isAdminLevel(u.role) ? 'info' : ''}`}>{u.role}</span>
                   </td>
-                  <td>{u.role === 'admin' ? <span className="muted small">— (not gated)</span> : <strong>{fmt(u.credit_balance)}</strong>}</td>
+                  <td>{isAdminLevel(u.role) ? <span className="muted small">— (not gated)</span> : <strong>{fmt(u.credit_balance)}</strong>}</td>
                   <td style={{ textAlign: 'right' }}>
                     {u.role === 'user' && (
                       <>

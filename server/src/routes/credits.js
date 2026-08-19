@@ -3,7 +3,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { ApiError, asyncHandler } = require('../http');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requireRole, requireAdminLevel } = require('../middleware/auth');
 const credits = require('../services/creditService');
 
 const router = express.Router();
@@ -17,8 +17,9 @@ router.get(
   })
 );
 
-// Everything below is admin-only (the vendor manages the pool + wallets).
-router.use(requireRole('admin'));
+// Everything below needs admin-level access (admin or vendor): viewing wallets
+// and allocating/reclaiming. Topping up the pool is vendor-only (see below).
+router.use(requireAdminLevel);
 
 router.get(
   '/overview',
@@ -41,8 +42,11 @@ const amountSchema = z.object({
 });
 const userAmountSchema = amountSchema.extend({ userId: z.coerce.number().int().positive() });
 
+// Topping up the pool is the vendor's job only — admins can allocate what the
+// vendor has bought, but can't create credits.
 router.post(
   '/topup',
+  requireRole('vendor'),
   asyncHandler(async (req, res) => {
     const p = amountSchema.safeParse(req.body);
     if (!p.success) throw new ApiError(400, 'Enter a positive whole number of credits');

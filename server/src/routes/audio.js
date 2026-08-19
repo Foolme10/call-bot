@@ -6,7 +6,7 @@ const path = require('path');
 const db = require('../db');
 const config = require('../config');
 const { ApiError, asyncHandler } = require('../http');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, isAdminLevel } = require('../middleware/auth');
 const { audioUpload } = require('../middleware/upload');
 const { convertToAsterisk, removeAudio } = require('../services/audioConvert');
 const logger = require('../logger');
@@ -19,7 +19,7 @@ router.use(requireAuth);
 router.get(
   '/:id/play',
   asyncHandler(async (req, res) => {
-    const isAdmin = req.user.role === 'admin';
+    const isAdmin = isAdminLevel(req.user.role);
     const rows = await db.query(
       `SELECT stored_filename FROM audio_files
          WHERE id = :id ${isAdmin ? '' : 'AND user_id = :uid'}`,
