@@ -10,7 +10,7 @@ const { requireAuth, isAdminLevel } = require('../middleware/auth');
 const { resolveTmpUpload } = require('../middleware/upload');
 const { extractContacts, parseManual } = require('../services/fileParser');
 const { engineFor } = require('../services/campaignEngine');
-const { findNonLatin, smsSegments, renderTemplate } = require('../services/smsText');
+const { findNonLatin, smsSegments, renderTemplate, contactValues } = require('../services/smsText');
 
 // Chars reserved before the body that are NOT part of the rendered text: the
 // gateway sender label + the always-on safety cushion. (The prepend, e.g.
@@ -36,13 +36,13 @@ function assertSmsWithinSegments(text) {
 // Reject if the message would exceed the segment cap for ANY contact once
 // {name}/{amount} are filled in with that contact's real values. This is the
 // accurate check: a short template can still spill into a second segment for a
-// recipient with a long name. `contacts` is [{ name, amount }, …].
+// recipient with a long name. `contacts` is [{ name, amount, fields }, …].
 function assertSmsFitsContacts(contacts, template) {
   const max = config.sms.maxSegments;
   const prefixChars = smsGatewayPrefixChars();
   let worst = null;
   for (const c of contacts) {
-    const rendered = config.sms.prepend + renderTemplate(template, { name: c.name, amount: c.amount });
+    const rendered = config.sms.prepend + renderTemplate(template, contactValues(c));
     const { segments, totalLen } = smsSegments(rendered, prefixChars);
     if (!worst || segments > worst.segments || (segments === worst.segments && totalLen > worst.totalLen)) {
       worst = { segments, totalLen, name: c.name };
@@ -336,13 +336,15 @@ router.post(
       const tuples = [];
       const params = { cid: campaignId };
       chunk.forEach((c, j) => {
-        tuples.push(`(:cid, :name${j}, :phone${j}, :amount${j})`);
+        tuples.push(`(:cid, :name${j}, :phone${j}, :amount${j}, :fields${j})`);
         params[`name${j}`] = c.name;
         params[`phone${j}`] = c.phone;
         params[`amount${j}`] = c.amount;
+        // Dynamic per-recipient variables (every uploaded column), stored as JSON.
+        params[`fields${j}`] = JSON.stringify(c.fields || {});
       });
       await db.query(
-        `INSERT INTO contacts (campaign_id, name, phone, amount) VALUES ${tuples.join(',')}`,
+        `INSERT INTO contacts (campaign_id, name, phone, amount, fields) VALUES ${tuples.join(',')}`,
         params
       );
     }
@@ -540,7 +542,7 @@ router.patch(
       // Check the segment cap against this campaign's real recipients. Fall back
       // to the raw-template check if the list isn't seeded yet (draft).
       const recipients = await db.query(
-        'SELECT name, amount FROM contacts WHERE campaign_id = :id',
+        'SELECT name, amount, fields FROM contacts WHERE campaign_id = :id',
         { id: campaign.id }
       );
       if (recipients.length) assertSmsFitsContacts(recipients, d.messageTemplate);

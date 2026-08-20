@@ -2,14 +2,20 @@
 // scripts / emoji / smart quotes force costly unicode encoding and can be
 // blocked by networks. Returns the unique disallowed characters (empty = OK).
 // Iterates by code point so emoji count as a single character.
-// Fill {name}/{amount} placeholders (case-insensitive) from a row, single-pass
-// so a value containing a token isn't re-expanded. Missing -> empty string.
-export function renderTemplate(template, { name, amount } = {}) {
-  const values = {
-    name: name == null ? '' : String(name),
-    amount: amount == null ? '' : String(amount),
-  };
-  return String(template || '').replace(/\{\s*(name|amount)\s*\}/gi, (_m, key) => values[key.toLowerCase()]);
+// Fill {variable} placeholders from a values object. Variables are dynamic: any
+// key (e.g. an uploaded spreadsheet header like {name}, {amount}, {due_date}) is
+// substituted, matched case-insensitively and ignoring surrounding whitespace. A
+// token with no matching value is left as-is. Single-pass so a value containing a
+// token isn't re-expanded. Must match server/src/services/smsText.js.
+export function renderTemplate(template, values = {}) {
+  const lookup = Object.create(null);
+  for (const [k, v] of Object.entries(values || {})) {
+    lookup[String(k).trim().toLowerCase()] = v == null ? '' : String(v);
+  }
+  return String(template || '').replace(/\{\s*([^{}]+?)\s*\}/g, (m, rawKey) => {
+    const key = String(rawKey).trim().toLowerCase();
+    return key in lookup ? lookup[key] : m;
+  });
 }
 
 // Rough SMS segment estimate. Unicode (non-GSM) messages pack fewer chars.

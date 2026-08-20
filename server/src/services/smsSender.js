@@ -6,13 +6,15 @@ const db = require('../db');
 const monitor = require('../ws/monitor');
 const smsProvider = require('./smsProvider');
 const creditService = require('./creditService');
-const { smsSegments } = require('./smsText');
+const { smsSegments, renderTemplate, contactValues } = require('./smsText');
 
 // The real message a recipient gets (prepend + rendered template) and how many
 // SMS credits it costs (gateway sender-label prefix included, no composer
 // safety cushion — that's only for blocking over-long templates, not billing).
+// Placeholders are filled from the recipient's dynamic fields (every uploaded
+// column) plus the mapped name/amount columns.
 function messageFor(template, row) {
-  const content = config.sms.prepend + renderTemplate(template, { name: row.name, amount: row.amount });
+  const content = config.sms.prepend + renderTemplate(template, contactValues(row));
   const { segments } = smsSegments(content, config.sms.prefixChars || 0);
   return { content, credits: Math.max(1, segments) };
 }
@@ -36,18 +38,6 @@ let schedulerTimer = null;
 let globalInFlight = 0;
 
 const TICK_MS = 250;
-
-// Fill {name} / {amount} placeholders (case-insensitive) from a contact row.
-// Missing values substitute to an empty string so a template never leaks a raw
-// "{amount}" to a recipient. Single-pass so a value that itself contains a
-// token (e.g. a name of "{amount}") is never re-expanded.
-function renderTemplate(template, { name, amount }) {
-  const values = {
-    name: name == null ? '' : String(name),
-    amount: amount == null ? '' : String(amount),
-  };
-  return String(template || '').replace(/\{\s*(name|amount)\s*\}/gi, (_m, key) => values[key.toLowerCase()]);
-}
 
 // Should this failed send be requeued for another attempt? Only transient
 // gateway/network errors are retryable, and only within the campaign's limits.
@@ -204,7 +194,7 @@ class SmsRunner {
     if (this.buffer.length === 0) {
       const capSql = this.maxTotalDials > 0 ? 'AND total_dials < :cap' : '';
       this.buffer = await db.query(
-        `SELECT id, name, phone, amount, attempts, total_dials FROM call_logs
+        `SELECT id, name, phone, amount, fields, attempts, total_dials FROM call_logs
            WHERE campaign_id = :id AND status = 'queued' ${capSql}
              AND (next_attempt_at IS NULL OR next_attempt_at <= UTC_TIMESTAMP())
            ORDER BY id LIMIT 200`,
@@ -247,7 +237,7 @@ class SmsRunner {
       // Content was rendered (with the "DCA: "/prepend identifier) at reserve
       // time; reuse it so the billed segments match what's actually sent.
       const content =
-        row._content || config.sms.prepend + renderTemplate(this.template, { name: row.name, amount: row.amount });
+        row._content || config.sms.prepend + renderTemplate(this.template, contactValues(row));
       const result = await smsProvider.sendSms({ to: row.phone, content });
       if (result.ok) keepCharge = true; // gateway accepted → the credit is real
 
@@ -379,7 +369,7 @@ async function estimateCredits(campaign) {
   const recipients = Number(n);
   if (recipients === 0) return 0;
   const [sample] = await db.query(
-    "SELECT name, amount FROM call_logs WHERE campaign_id = :id AND status = 'queued' LIMIT 1",
+    "SELECT name, amount, fields FROM call_logs WHERE campaign_id = :id AND status = 'queued' LIMIT 1",
     { id: campaign.id }
   );
   const perMsg = messageFor(campaign.message_template || '', sample || {}).credits;
@@ -387,15 +377,16 @@ async function estimateCredits(campaign) {
 }
 
 // Seed call_logs from contacts the first time a campaign runs. Carries the
-// contact's amount so the template can be rendered per-recipient at send time.
+// contact's amount + dynamic fields so the template can be rendered per-recipient
+// at send time.
 async function ensureSendLogs(campaignId) {
   const [{ n }] = await db.query('SELECT COUNT(*) AS n FROM call_logs WHERE campaign_id = :id', {
     id: campaignId,
   });
   if (n > 0) return;
   await db.execute(
-    `INSERT INTO call_logs (campaign_id, contact_id, name, phone, amount, status)
-       SELECT campaign_id, id, name, phone, amount, 'queued' FROM contacts WHERE campaign_id = :id`,
+    `INSERT INTO call_logs (campaign_id, contact_id, name, phone, amount, fields, status)
+       SELECT campaign_id, id, name, phone, amount, fields, 'queued' FROM contacts WHERE campaign_id = :id`,
     { id: campaignId }
   );
 }

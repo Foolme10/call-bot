@@ -31,15 +31,46 @@ function smsSegments(text, prefixChars = 0) {
   return { totalLen, segments, unicode };
 }
 
-// Fill {name}/{amount} placeholders (case-insensitive) from a contact row —
-// must match client/src/smsText.js and smsSender.renderTemplate. Single-pass so
-// a value containing a token isn't re-expanded; missing values -> empty string.
-function renderTemplate(template, { name, amount } = {}) {
-  const values = {
-    name: name == null ? '' : String(name),
-    amount: amount == null ? '' : String(amount),
-  };
-  return String(template || '').replace(/\{\s*(name|amount)\s*\}/gi, (_m, key) => values[key.toLowerCase()]);
+// Fill {variable} placeholders from a contact's values. Variables are dynamic:
+// any key in `values` (e.g. an uploaded spreadsheet header like {name}, {amount},
+// {due_date}, {ref}) is substituted, matched case-insensitively and ignoring
+// surrounding whitespace. A token with no matching value is left as-is (so a typo
+// like {amont} is visible rather than silently blanked). Single-pass so a value
+// that itself contains a token isn't re-expanded. Must match client/src/smsText.js
+// and smsSender.renderTemplate.
+function renderTemplate(template, values = {}) {
+  const lookup = Object.create(null);
+  for (const [k, v] of Object.entries(values || {})) {
+    lookup[String(k).trim().toLowerCase()] = v == null ? '' : String(v);
+  }
+  return String(template || '').replace(/\{\s*([^{}]+?)\s*\}/g, (m, rawKey) => {
+    const key = String(rawKey).trim().toLowerCase();
+    return key in lookup ? lookup[key] : m;
+  });
 }
 
-module.exports = { findNonLatin, smsSegments, renderTemplate };
+// A contacts/call_logs row's `fields` column is JSON. mysql2 usually hands it
+// back already parsed, but tolerate a raw string (or null) too.
+function asFields(v) {
+  if (!v) return {};
+  if (typeof v === 'object') return v;
+  try {
+    const o = JSON.parse(v);
+    return o && typeof o === 'object' ? o : {};
+  } catch (_e) {
+    return {};
+  }
+}
+
+// Build the variable set for rendering one recipient's message: every uploaded
+// column (from `fields`), with the mapped name/amount columns taking precedence
+// when they hold a value (so {name}/{amount} follow the column the user picked,
+// not a stray same-named header).
+function contactValues(row) {
+  const values = { ...asFields(row && row.fields) };
+  if (row && row.name != null && row.name !== '') values.name = row.name;
+  if (row && row.amount != null && row.amount !== '') values.amount = row.amount;
+  return values;
+}
+
+module.exports = { findNonLatin, smsSegments, renderTemplate, asFields, contactValues };

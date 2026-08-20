@@ -59,9 +59,18 @@ function preview(filePath, sampleSize = 5) {
   return { columns, sample: rows.slice(0, sampleSize), totalRows: rows.length };
 }
 
+// Cap on how much of each spreadsheet cell we keep as a template variable, and
+// how many distinct columns we retain — a guard against a pathological upload
+// blowing up the per-recipient JSON.
+const FIELD_VALUE_MAX = 256;
+const FIELD_KEYS_MAX = 40;
+
 // Step 2: pull the chosen name + number (+ optional amount) columns, normalize,
-// drop invalids. `amountColumn` feeds the SMS {amount} variable (ignored for
-// voice). Returns { contacts: [{name, phone, amount}], total, valid, invalid }.
+// drop invalids, AND capture every other column so any header can be used as a
+// dynamic {variable} in an SMS. `amountColumn` feeds the legacy {amount} variable
+// (ignored for voice). Returns
+//   { contacts: [{ name, phone, amount, fields }], total, valid, invalid }
+// where `fields` is { header: value } for every column (the phone column aside).
 function extractContacts(filePath, nameColumn, numberColumn, amountColumn) {
   const { columns, rows } = readTable(filePath);
   if (!columns.includes(numberColumn)) {
@@ -69,6 +78,8 @@ function extractContacts(filePath, nameColumn, numberColumn, amountColumn) {
   }
   const hasName = nameColumn && columns.includes(nameColumn);
   const hasAmount = amountColumn && columns.includes(amountColumn);
+  // Which columns become template variables: everything except the phone column.
+  const fieldColumns = columns.filter((c) => c !== numberColumn).slice(0, FIELD_KEYS_MAX);
 
   const contacts = [];
   let invalid = 0;
@@ -80,7 +91,11 @@ function extractContacts(filePath, nameColumn, numberColumn, amountColumn) {
     }
     const name = hasName ? String(row[nameColumn] ?? '').trim().slice(0, 128) : null;
     const amount = hasAmount ? String(row[amountColumn] ?? '').trim().slice(0, 64) : null;
-    contacts.push({ name: name || null, phone, amount: amount || null });
+    const fields = {};
+    for (const col of fieldColumns) {
+      fields[col] = String(row[col] ?? '').trim().slice(0, FIELD_VALUE_MAX);
+    }
+    contacts.push({ name: name || null, phone, amount: amount || null, fields });
   }
   return { contacts, total: rows.length, valid: contacts.length, invalid };
 }
@@ -108,7 +123,12 @@ function parseManual(text) {
     // Everything after the name is the amount, rejoined so a value that itself
     // contains a comma (e.g. "1,000") isn't truncated.
     const amount = parts.length > 2 ? parts.slice(2).join(',').slice(0, 64) : null;
-    contacts.push({ name: name || null, phone, amount: amount || null });
+    // Typed lists only carry name/amount — expose them as fields too so the same
+    // dynamic-variable rendering path works for manual entries.
+    const fields = {};
+    if (name) fields.name = name;
+    if (amount) fields.amount = amount;
+    contacts.push({ name: name || null, phone, amount: amount || null, fields });
   }
   return { contacts, total, valid: contacts.length, invalid };
 }

@@ -109,6 +109,18 @@ export default function Library() {
     await api.del(`/caller-ids/${id}`).then(load).catch((e) => alert(e.message));
   }
 
+  // Prompt for any variable name (e.g. an uploaded column header) and insert it.
+  // Templates are reusable across campaigns, so beyond {name}/{amount} the author
+  // can reference any column their contact file will provide.
+  function insertCustomVar() {
+    const raw = prompt(
+      'Variable name to insert.\nUse a column header from your contact file, e.g. due_date, ref_no, ic.'
+    );
+    if (!raw) return;
+    const clean = raw.trim().replace(/^\{+|\}+$/g, '').trim();
+    if (clean) insertTplVar(`{${clean}}`);
+  }
+
   // Insert a {variable} at the message cursor position (same as the composer).
   function insertTplVar(token) {
     const el = tplBodyRef.current;
@@ -305,9 +317,10 @@ export default function Library() {
       <section className="card">
         <h3>SMS message templates</h3>
         <p className="muted small">
-          Reusable SMS messages. Use <code>{'{name}'}</code> / <code>{'{amount}'}</code> to personalize
-          per recipient. Saved templates appear in the “Load a saved template” dropdown when you
-          compose an SMS campaign.
+          Reusable SMS messages. Insert <code>{'{name}'}</code> / <code>{'{amount}'}</code> or any other
+          column from your contact file (e.g. <code>{'{due_date}'}</code>) with “Custom variable” — each{' '}
+          <code>{'{header}'}</code> is filled per recipient from the matching spreadsheet column. Saved
+          templates appear in the “Load a saved template” dropdown when you compose an SMS campaign.
         </p>
         <SmsNotice />
         <form onSubmit={saveTemplate} style={{ marginBottom: 16 }}>
@@ -320,10 +333,13 @@ export default function Library() {
           <label style={{ marginTop: 8 }}>Message</label>
           <div className="radio-row" style={{ marginBottom: 8, flexWrap: 'wrap' }}>
             <button type="button" className="btn small ghost" onClick={() => insertTplVar('{name}')}>
-              + Insert {'{name}'}
+              + {'{name}'}
             </button>
             <button type="button" className="btn small ghost" onClick={() => insertTplVar('{amount}')}>
-              + Insert {'{amount}'}
+              + {'{amount}'}
+            </button>
+            <button type="button" className="btn small ghost" onClick={insertCustomVar}>
+              + Custom variable…
             </button>
           </div>
           <textarea

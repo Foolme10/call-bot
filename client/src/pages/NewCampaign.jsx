@@ -362,16 +362,28 @@ export default function NewCampaign() {
 
   // Live message preview using the first uploaded row (or example values).
   const sampleRow = preview && preview.sample && preview.sample[0];
-  const previewName = sampleRow && nameColumn ? sampleRow[nameColumn] : 'Alex';
-  const previewAmount = sampleRow && amountColumn ? sampleRow[amountColumn] : '100';
+  // Build the {variable} set for a spreadsheet row: every column by its header,
+  // with the mapped name/amount columns taking precedence for {name}/{amount}.
+  const rowValues = (r) => {
+    if (!r) return { name: 'Alex', amount: '100' };
+    const v = { ...r };
+    if (nameColumn && r[nameColumn] != null && r[nameColumn] !== '') v.name = r[nameColumn];
+    if (amountColumn && r[amountColumn] != null && r[amountColumn] !== '') v.amount = r[amountColumn];
+    return v;
+  };
+  // Extra spreadsheet columns (beyond phone/name/amount) offered as insertable
+  // {variables} in the composer.
+  const extraVarColumns =
+    (preview && preview.columns
+      ? preview.columns.filter((c) => c !== numberColumn && c !== nameColumn && c !== amountColumn)
+      : []);
   const smsPrepend = (pacing && pacing.sms && pacing.sms.prepend) || ''; // e.g. "eSMS: " (auto-added)
   const smsPrefixChars = (pacing && pacing.sms && pacing.sms.prefixChars) || 0; // gateway sender label (count only)
   const smsPrefixLabel = (pacing && pacing.sms && pacing.sms.prefixLabel) || '';
   const smsSafetyChars = (pacing && pacing.sms && pacing.sms.safetyChars) || 0; // always-on cushion
   const smsPrefixReserved = smsPrefixChars + smsSafetyChars; // reserved but not in the sent text
   const smsReserved = smsPrepend.length + smsPrefixReserved; // total chars eaten before the body
-  const previewText =
-    smsPrepend + renderTemplate(messageTemplate, { name: previewName, amount: previewAmount });
+  const previewText = smsPrepend + renderTemplate(messageTemplate, rowValues(sampleRow));
   const seg = smsSegments(messageTemplate, smsReserved);
   // Worst-case segments using the REAL preview rows (name/amount expanded), so
   // the counter reflects the actual sent message, not the literal "{name}". The
@@ -383,12 +395,7 @@ export default function NewCampaign() {
   if (isSms && messageTemplate && smsSampleRows.length) {
     let w = null;
     for (const r of smsSampleRows) {
-      const rendered =
-        smsPrepend +
-        renderTemplate(messageTemplate, {
-          name: nameColumn ? r[nameColumn] : '',
-          amount: amountColumn ? r[amountColumn] : '',
-        });
+      const rendered = smsPrepend + renderTemplate(messageTemplate, rowValues(r));
       const s = smsSegments(rendered, smsPrefixReserved);
       if (!w || s.segments > w.segments || (s.segments === w.segments && s.totalLen > w.totalLen)) w = s;
     }
@@ -611,15 +618,32 @@ export default function NewCampaign() {
             <>
               <div className="radio-row" style={{ marginBottom: 8, flexWrap: 'wrap' }}>
                 <button type="button" className="btn small ghost" onClick={() => insertVar('{name}')}>
-                  + Insert {'{name}'}
+                  + {'{name}'}
                 </button>
                 <button type="button" className="btn small ghost" onClick={() => insertVar('{amount}')}>
-                  + Insert {'{amount}'}
+                  + {'{amount}'}
                 </button>
+                {/* Dynamic: every other column from the uploaded file becomes a variable. */}
+                {extraVarColumns.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    className="btn small ghost"
+                    onClick={() => insertVar(`{${c}}`)}
+                    title={`Insert {${c}} — filled from the “${c}” column`}
+                  >
+                    + {`{${c}}`}
+                  </button>
+                ))}
                 <button type="button" className="btn small" onClick={saveAsTemplate}>
                   💾 Save as template
                 </button>
               </div>
+              {contactSource === 'upload' && !preview && (
+                <p className="muted small" style={{ marginTop: -2 }}>
+                  Upload your contact file above to turn its column headers into insertable variables.
+                </p>
+              )}
               {templates.length > 0 && (
                 <div style={{ marginBottom: 8 }}>
                   <select

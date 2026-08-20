@@ -163,6 +163,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   name        VARCHAR(128) NULL,
   phone       VARCHAR(32)  NOT NULL,
   amount      VARCHAR(64)  NULL,   -- optional per-recipient value for the SMS {amount} variable
+  fields      JSON         NULL,   -- every uploaded column {header: value} for dynamic SMS {variables}
   created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_contacts_campaign (campaign_id),
@@ -181,6 +182,7 @@ CREATE TABLE IF NOT EXISTS call_logs (
   name          VARCHAR(128) NULL,
   phone         VARCHAR(32)  NOT NULL,
   amount        VARCHAR(64)  NULL,   -- SMS: per-recipient {amount} value, copied from contacts
+  fields        JSON         NULL,   -- SMS: dynamic {variable} values, copied from contacts
   -- Voice outcomes: answered/busy/no_answer/failed/congestion/machine.
   -- SMS outcomes: 'sent' (gateway accepted) / 'failed'. 'dialing' doubles as the
   -- in-flight marker for SMS ("sending"). 'queued' = not yet dialed/sent.

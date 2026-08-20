@@ -110,6 +110,10 @@ async function main() {
   await ensureColumn('campaigns', 'message_template', 'message_template TEXT NULL AFTER audio_file_id');
   await ensureColumn('contacts', 'amount', 'amount VARCHAR(64) NULL AFTER phone');
   await ensureColumn('call_logs', 'amount', 'amount VARCHAR(64) NULL AFTER phone');
+  // Dynamic SMS variables: every uploaded spreadsheet column, stored per
+  // recipient as JSON {header: value} so any {header} works in a template.
+  await ensureColumn('contacts', 'fields', 'fields JSON NULL AFTER amount');
+  await ensureColumn('call_logs', 'fields', 'fields JSON NULL AFTER amount');
   await ensureColumn('call_logs', 'error_detail', 'error_detail VARCHAR(255) NULL AFTER hangup_cause');
   await ensureColumn('call_logs', 'provider_msgid', 'provider_msgid VARCHAR(64) NULL AFTER error_detail');
   await ensureIndex('call_logs', 'idx_calllogs_msgid', 'KEY idx_calllogs_msgid (provider_msgid)');
