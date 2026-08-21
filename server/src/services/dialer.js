@@ -204,6 +204,7 @@ class Runner {
       guardTimer: null, // auto-hangup safety timer (armed when playback starts)
       runner: this,
       finalized: false,
+      startedAt: Date.now(), // for the reaper's ring-deadline check
       attempt: (row.attempts || 0) + 1, // this dial is attempt N
       totalDials: (row.total_dials || 0) + 1, // lifetime dials incl. this one
       amd: this.amdEnabled,
@@ -686,6 +687,28 @@ async function onConnect(client) {
 // and the DB row are all released together, and the pump restarts on its own.
 async function reapStuckCalls() {
   try {
+    const client = ari.getClient();
+    let reclaimed = 0;
+
+    // Fast path: an unanswered call cannot legitimately outlive the originate
+    // timeout — Asterisk cancels ringing at config.dial.originateTimeout. A
+    // tracked call still unanswered well past that has lost its teardown event
+    // (or Asterisk failed to cancel it): hang it up ourselves and finalize as
+    // no-answer, so its slot frees within about a minute of the ring window
+    // closing instead of waiting for the deep cutoff below.
+    const ringDeadlineMs = (config.dial.originateTimeout + 15) * 1000;
+    for (const [channelId, call] of [...activeCalls]) {
+      if (call.answered || call.finalized) continue;
+      if (!call.startedAt || Date.now() - call.startedAt < ringDeadlineMs) continue;
+      try {
+        if (client) await client.channels.hangup({ channelId });
+      } catch (_e) {
+        /* already gone — its teardown event simply never reached us */
+      }
+      await finalizeCall(channelId, 16, undefined); // unanswered → no_answer
+      reclaimed += 1;
+    }
+
     const cutoff = config.dial.maxCallSeconds + 120; // generous — beyond any real call
     const rows = await db.query(
       `SELECT id FROM call_logs
@@ -696,8 +719,6 @@ async function reapStuckCalls() {
     );
     const channelByLogId = new Map();
     for (const [channelId, call] of activeCalls) channelByLogId.set(call.callLogId, channelId);
-    const client = ari.getClient();
-    let reclaimed = 0;
     let reaped = 0;
     for (const r of rows) {
       const channelId = channelByLogId.get(r.id);
@@ -764,7 +785,7 @@ async function checkScheduled() {
 async function start() {
   await ari.connect(onConnect);
   schedulerTimer = setInterval(checkScheduled, 30000);
-  reaperTimer = setInterval(reapStuckCalls, 60000);
+  reaperTimer = setInterval(reapStuckCalls, 15000);
 }
 
 function stop() {
