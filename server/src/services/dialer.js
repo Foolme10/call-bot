@@ -186,16 +186,11 @@ class Runner {
     const endpoint = config.dial.endpointTemplate.replace('{number}', row.phone);
 
     // Reserve the row + slot before the async originate so a concurrent pump
-    // can't grab it again. globalLive tracks the trunk-wide budget.
+    // can't grab it again. globalLive tracks the trunk-wide budget. The counter
+    // and activeCalls are updated in the same synchronous block so they always
+    // mirror each other one-for-one (the reaper's drift check relies on this).
     this.live.add(channelId);
     globalLive += 1;
-    await db.execute(
-      `UPDATE call_logs
-          SET status = 'dialing', channel = :channel, dial_start = UTC_TIMESTAMP(),
-              attempts = attempts + 1, total_dials = total_dials + 1
-        WHERE id = :id`,
-      { channel: channelId, id: row.id }
-    );
     activeCalls.set(channelId, {
       campaignId: this.id,
       callLogId: row.id,
@@ -213,6 +208,13 @@ class Runner {
       totalDials: (row.total_dials || 0) + 1, // lifetime dials incl. this one
       amd: this.amdEnabled,
     });
+    await db.execute(
+      `UPDATE call_logs
+          SET status = 'dialing', channel = :channel, dial_start = UTC_TIMESTAMP(),
+              attempts = attempts + 1, total_dials = total_dials + 1
+        WHERE id = :id`,
+      { channel: channelId, id: row.id }
+    );
     monitor.publish(this.id, {
       type: 'call',
       callLogId: row.id,
@@ -672,12 +674,18 @@ async function onConnect(client) {
 
 // Belt for the per-call guard: finalize any voice call still 'dialing'/'answered'
 // with no end_time long past when it could still be live — e.g. orphaned by a
-// process crash mid-call, or an ARI event that was fully lost. Never touches a
-// call we're still actively tracking, and only rows well older than any real
-// call, so it can't cut a live one.
+// process crash mid-call, or an ARI event that was fully lost. Only touches rows
+// well older than any real call, so it can't cut a live one.
+//
+// Calls we still TRACK in memory are the dangerous case: their teardown event
+// (ChannelDestroyed / PlaybackFinished) was lost AND the hangup guard never
+// fired, so they sit in activeCalls holding a globalLive slot that nothing else
+// will ever free. Enough of those and the pump's `globalLive < cap` check wedges
+// every campaign — numbers freeze in 'queued' with the campaign still 'running'.
+// Those are reclaimed through finalizeCall so the slot, the runner's live set,
+// and the DB row are all released together, and the pump restarts on its own.
 async function reapStuckCalls() {
   try {
-    const activeIds = new Set([...activeCalls.values()].map((c) => c.callLogId));
     const cutoff = config.dial.maxCallSeconds + 120; // generous — beyond any real call
     const rows = await db.query(
       `SELECT id FROM call_logs
@@ -686,9 +694,28 @@ async function reapStuckCalls() {
            AND campaign_id IN (SELECT id FROM campaigns WHERE channel = 'voice')`,
       { cutoff }
     );
+    const channelByLogId = new Map();
+    for (const [channelId, call] of activeCalls) channelByLogId.set(call.callLogId, channelId);
+    const client = ari.getClient();
+    let reclaimed = 0;
     let reaped = 0;
     for (const r of rows) {
-      if (activeIds.has(r.id)) continue; // still tracking this one — leave it
+      const channelId = channelByLogId.get(r.id);
+      if (channelId) {
+        // Still tracked: a leaked slot. Hang up in case the channel somehow
+        // exists, then finalize through the normal path (same semantics as the
+        // hangup guard) so every counter is released.
+        const call = activeCalls.get(channelId);
+        try {
+          if (client) await client.channels.hangup({ channelId });
+        } catch (_e) {
+          /* channel long gone — that's exactly why we're here */
+        }
+        await finalizeCall(channelId, 16, call && call.answered ? 'answered' : undefined);
+        reclaimed += 1;
+        continue;
+      }
+      // Untracked row (e.g. orphaned by a crash/restart): close it in the DB.
       const res = await db.execute(
         `UPDATE call_logs
             SET status = CASE WHEN answer_time IS NOT NULL THEN 'answered' ELSE 'failed' END,
@@ -699,7 +726,20 @@ async function reapStuckCalls() {
       );
       reaped += res.affectedRows > 0 ? 1 : 0;
     }
+    if (reclaimed) logger.warn(`Reclaimed ${reclaimed} leaked call slot(s) (lost ARI teardown events)`);
     if (reaped) logger.warn(`Reaped ${reaped} stuck voice call row(s)`);
+
+    // Second belt: the shared budget must mirror activeCalls one-for-one (they
+    // are updated together in dispatch/finalize). Heal any residual drift so a
+    // leak can never permanently shrink dial capacity until a restart again.
+    for (const runner of runners.values()) {
+      for (const ch of [...runner.live]) if (!activeCalls.has(ch)) runner.live.delete(ch);
+    }
+    if (globalLive !== activeCalls.size) {
+      logger.warn(`Dial slot counter drifted (globalLive=${globalLive}, live calls=${activeCalls.size}) — healed`);
+      globalLive = activeCalls.size;
+      for (const runner of runners.values()) if (runner.running) runner.pump();
+    }
   } catch (e) {
     logger.error('Stuck-call reaper error:', e.message);
   }
