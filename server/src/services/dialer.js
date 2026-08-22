@@ -25,6 +25,11 @@ const TICK_MS = 250;
 // A pump pass doing real work finishes in well under a second; this long means
 // it is hung on something that will never settle.
 const STUCK_PUMP_MS = 120000;
+// A reserved slot older than this cannot belong to a live call: it covers the
+// full ring, the longest message, and the guard's own grace on top.
+function liveSlotStaleMs() {
+  return (config.dial.originateTimeout + config.dial.maxCallSeconds + 180) * 1000;
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Q.850 hangup-cause → report status
@@ -114,7 +119,9 @@ class Runner {
     this.nextRetryAt = null; // epoch ms — set while idling until a future retry is due
     this.maxTotalDials = config.calls.maxTotalDials; // lifetime dial cap (0 = off)
     this.amdEnabled = !!campaign.amd_enabled; // answering-machine detection on?
-    this.live = new Set(); // channelIds currently up for this campaign
+    // channelId -> when the slot was reserved. A Map (not a Set) so the
+    // watchdog can tell a slot mid-dispatch from one genuinely orphaned.
+    this.live = new Map();
     this.buffer = []; // prefetched queued call_log rows
     this.tokens = 0;
     this.running = false;
@@ -140,7 +147,7 @@ class Runner {
   // Hang up everything still in progress.
   async hangupAll() {
     const client = ari.getClient();
-    for (const channelId of [...this.live]) {
+    for (const channelId of [...this.live.keys()]) {
       try {
         await withTimeout(
           client.channels.hangup({ channelId }),
@@ -237,7 +244,7 @@ class Runner {
 
     // Reserve the row + slot before the async originate so a concurrent pump
     // can't grab it again. globalLive tracks the trunk-wide budget.
-    this.live.add(channelId);
+    this.live.set(channelId, Date.now());
     globalLive += 1;
     try {
       await db.execute(
@@ -1071,10 +1078,16 @@ async function reconcileRunners() {
           runner._busySince = 0;
           runner.buffer = [];
         }
-        for (const channelId of [...runner.live]) {
-          if (!activeCalls.has(channelId)) {
-            logger.warn(`Campaign ${c.id} holding a slot for untracked channel ${channelId} — freeing it`);
+        // Only prune slots that are BOTH untracked and older than any call
+        // could be. A slot is reserved a moment before its activeCalls entry
+        // exists, so pruning on "untracked" alone frees calls that are just
+        // starting — which is worse than the leak it was meant to fix.
+        const staleBefore = Date.now() - liveSlotStaleMs();
+        for (const [channelId, addedAt] of [...runner.live]) {
+          if (!activeCalls.has(channelId) && addedAt < staleBefore) {
+            logger.warn(`Campaign ${c.id} holding a stale slot for ${channelId} — freeing it`);
             runner.live.delete(channelId);
+            globalLive = Math.max(0, globalLive - 1);
           }
         }
         continue; // healthy (or just unwedged)
