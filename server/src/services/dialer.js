@@ -304,8 +304,27 @@ class Runner {
     // leaking the slot. Answering re-arms it; finalizeCall clears it.
     armCallGuard(channelId, config.dial.originateTimeout + 60);
 
+    // Hand the ARI half off WITHOUT awaiting it. The pump is single-flight
+    // (_busy), so awaiting here made the whole campaign's dial rate hostage to
+    // one HTTP round-trip: ARI can block an originate for the length of the
+    // ring, which would drop a 20-line campaign to one call every 30 seconds.
+    // Pacing is already enforced by the token bucket and the concurrency caps,
+    // so the launch itself belongs off the pump.
+    this.originate(client, opts, row, channelId).catch((e) =>
+      logger.error(`Originate handling for ${row.phone} failed:`, e.message)
+    );
+  }
+
+  // Launch the channel and wire up its events. Runs detached from the pump.
+  async originate(client, opts, row, channelId) {
     try {
-      await withTimeout(client.channels.originate(opts), config.dial.ariRequestTimeout, 'originate');
+      // Bounded generously: ARI can hold this open for the ring, so the ceiling
+      // must sit above the ring timeout or every slow answer looks like a hang.
+      await withTimeout(
+        client.channels.originate(opts),
+        config.dial.originateTimeout + config.dial.ariRequestTimeout,
+        'originate'
+      );
     } catch (err) {
       if (err && err.ariTimeout) {
         // Asterisk may well have created the channel before going quiet, so
