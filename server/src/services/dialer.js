@@ -16,6 +16,7 @@ const activeCalls = new Map(); // channelId -> { campaignId, callLogId, answered
 const playbackIndex = new Map(); // playbackId -> channelId
 let schedulerTimer = null;
 let reaperTimer = null;
+let reconcileTimer = null;
 // Live calls across ALL campaigns right now — the shared trunk budget. Kept in
 // sync one-for-one with activeCalls (++ on dispatch, -- on finalize).
 let globalLive = 0;
@@ -132,6 +133,9 @@ class Runner {
     // Engine down (ARI reconnecting): don't dispatch — every originate would
     // fail instantly and burn the number's attempts. Resume when it's back.
     if (!ari.isConnected()) return;
+    // Recovery is resetting shared state right now; dispatching into that
+    // window orphans the call and re-queues its row underneath us.
+    if (recovering) return;
     // While idling between retry batches, skip cheaply (no DB) until due.
     if (this.nextRetryAt && this.live.size === 0 && Date.now() < this.nextRetryAt) return;
     this._busy = true;
@@ -795,6 +799,12 @@ async function finalizeCampaign(campaignId, status) {
 // the one in flight, never alongside it.
 let recoveryChain = Promise.resolve();
 
+// True only while recovery is resetting state. The pump checks it instead of
+// recovery pausing the runners: a paused runner stays paused if recovery dies
+// or hangs partway, which silently freezes EVERY campaign. A flag in a
+// `finally` always clears, so the worst case is a brief pause in dialing.
+let recovering = false;
+
 function onConnect(client) {
   recoveryChain = recoveryChain.then(
     () => runRecovery(client),
@@ -804,12 +814,16 @@ function onConnect(client) {
 }
 
 async function runRecovery(client) {
+  recovering = true;
+  try {
+    await recoverState(client);
+  } finally {
+    recovering = false;
+  }
+}
+
+async function recoverState(client) {
   registerHandlers(client);
-  // Freeze every pump while state is reset below — `connected` is already true
-  // at this point, so a runner that survived a reconnect could otherwise
-  // dispatch a call mid-cleanup and have it orphaned (untracked live channel,
-  // row re-queued, number dialed twice). The resume loop restarts running ones.
-  for (const runner of runners.values()) runner.pause();
 
   // A reconnect orphans any in-flight channels; reset them so they get redialed.
   // Scope to voice campaigns so an ARI reconnect never touches an SMS campaign's
@@ -839,12 +853,16 @@ async function runRecovery(client) {
         AND campaign_id IN (SELECT id FROM campaigns WHERE channel = 'voice')
       LIMIT 500`
   );
+  // Fire these off without awaiting: ari-client sets no request timeout, so a
+  // single unresponsive hangup would stall recovery — and with it every
+  // campaign — indefinitely. Best-effort is the right bar here; the rows are
+  // requeued either way, and the reaper catches anything still live.
   for (const o of orphans) {
-    try {
-      await client.channels.hangup({ channelId: o.channel });
-    } catch (_e) {
-      /* already gone */
-    }
+    Promise.resolve()
+      .then(() => client.channels.hangup({ channelId: o.channel }))
+      .catch(() => {
+        /* already gone, or ARI busy — nothing to do */
+      });
   }
   await db.execute(
     `UPDATE call_logs SET status = 'queued', channel = NULL
@@ -969,6 +987,30 @@ async function reapStuckCalls() {
   }
 }
 
+// Self-heal: a campaign whose DB status is 'running' must have a live runner.
+// If one is missing or sitting paused — a recovery that died partway, a
+// finalize that half-completed, any future bug of that shape — the campaign
+// silently stops dialing while looking healthy. Reconcile every minute so it
+// resumes on its own instead of waiting for someone to restart the process.
+async function reconcileRunners() {
+  if (recovering || !ari.isConnected()) return;
+  try {
+    const running = await db.query(
+      "SELECT id FROM campaigns WHERE status = 'running' AND channel = 'voice'"
+    );
+    for (const c of running) {
+      const runner = runners.get(c.id);
+      if (runner && runner.running) continue; // healthy
+      logger.warn(`Campaign ${c.id} is 'running' with ${runner ? 'a paused' : 'no'} runner — restarting it`);
+      await startCampaign(c.id).catch((e) =>
+        logger.error(`Could not restart campaign ${c.id}:`, e.message)
+      );
+    }
+  } catch (e) {
+    logger.error('Runner reconcile error:', e.message);
+  }
+}
+
 async function checkScheduled() {
   try {
     const due = await db.query(
@@ -989,11 +1031,13 @@ async function start() {
   await ari.connect(onConnect);
   schedulerTimer = setInterval(checkScheduled, 30000);
   reaperTimer = setInterval(reapStuckCalls, 60000);
+  reconcileTimer = setInterval(reconcileRunners, 60000);
 }
 
 function stop() {
   if (schedulerTimer) clearInterval(schedulerTimer);
   if (reaperTimer) clearInterval(reaperTimer);
+  if (reconcileTimer) clearInterval(reconcileTimer);
   for (const runner of runners.values()) runner.pause();
   ari.stop();
 }
