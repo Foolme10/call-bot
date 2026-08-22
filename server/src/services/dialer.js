@@ -480,6 +480,16 @@ function registerHandlers(client) {
     const channelId = playbackIndex.get(playback.id);
     if (!channelId) return;
     playbackIndex.delete(playback.id);
+    // A recording that failed to play (missing file, unreadable by Asterisk,
+    // wrong format) still ends the call — the callee just heard silence. Say
+    // so loudly: otherwise the campaign looks healthy while nobody hears it.
+    if (playback.state === 'failed') {
+      const call = activeCalls.get(channelId);
+      logger.error(
+        `Recording did NOT play on ${channelId} (${(call && call.media) || 'unknown media'}) — ` +
+          `callee heard silence. Check the file exists under AUDIO_DIR and is readable by Asterisk.`
+      );
+    }
     // The recording finished normally — hang up now. Keep a short guard armed
     // instead of clearing it: if this hangup (or its ChannelDestroyed event) is
     // lost, the guard still finalizes the call rather than leaking its slot.
