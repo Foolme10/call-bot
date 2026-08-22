@@ -747,7 +747,22 @@ async function finalizeCampaign(campaignId, status) {
 // ───────────────────────────────────────────────────────────────────────────
 // Scheduler + boot resume
 // ───────────────────────────────────────────────────────────────────────────
-async function onConnect(client) {
+// A flapping ARI websocket can fire recovery again while the previous one is
+// still running its awaited DB work. Two overlapping recoveries interleave
+// badly (one requeues rows the other just dispatched, clears the slots the
+// other just reserved), so they are serialized: a new one always runs AFTER
+// the one in flight, never alongside it.
+let recoveryChain = Promise.resolve();
+
+function onConnect(client) {
+  recoveryChain = recoveryChain.then(
+    () => runRecovery(client),
+    () => runRecovery(client) // a failed recovery must not block the next one
+  );
+  return recoveryChain;
+}
+
+async function runRecovery(client) {
   registerHandlers(client);
   // Freeze every pump while state is reset below — `connected` is already true
   // at this point, so a runner that survived a reconnect could otherwise
@@ -771,6 +786,24 @@ async function onConnect(client) {
           AND campaign_id IN (SELECT id FROM campaigns WHERE channel = 'voice')`,
       { cap: config.calls.maxTotalDials }
     );
+  }
+  // Those orphaned channels may still be UP in Asterisk (a websocket drop
+  // doesn't hang up calls). Since their rows go back on the queue below, drop
+  // the channels first — otherwise the number is redialed while the previous
+  // call is still live, and the stray channel plays to nobody and holds a
+  // trunk line no counter knows about. Best-effort: already-dead ids 404.
+  const orphans = await db.query(
+    `SELECT channel FROM call_logs
+      WHERE status = 'dialing' AND channel IS NOT NULL
+        AND campaign_id IN (SELECT id FROM campaigns WHERE channel = 'voice')
+      LIMIT 500`
+  );
+  for (const o of orphans) {
+    try {
+      await client.channels.hangup({ channelId: o.channel });
+    } catch (_e) {
+      /* already gone */
+    }
   }
   await db.execute(
     `UPDATE call_logs SET status = 'queued', channel = NULL
