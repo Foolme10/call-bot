@@ -158,6 +158,11 @@ const config = {
     // maxCallSeconds. A periodic reaper finalizes anything still orphaned.
     hangupBufferSec: Math.max(2, Number(process.env.DIAL_HANGUP_BUFFER_SEC || 20)),
     maxCallSeconds: Math.max(30, Number(process.env.DIAL_MAX_CALL_SECONDS || 300)),
+    // Seconds before a single ARI REST call (originate, hangup, subscribe) is
+    // abandoned. ari-client sets no timeout of its own, so without this an
+    // unresponsive Asterisk hangs the dialer's pump and the campaign silently
+    // stops dialing. Generous enough that a merely busy Asterisk still answers.
+    ariRequestTimeout: Math.max(5, Number(process.env.ARI_REQUEST_TIMEOUT || 20)),
   },
 
   calls: {

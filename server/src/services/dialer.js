@@ -22,6 +22,9 @@ let reconcileTimer = null;
 let globalLive = 0;
 
 const TICK_MS = 250;
+// A pump pass doing real work finishes in well under a second; this long means
+// it is hung on something that will never settle.
+const STUCK_PUMP_MS = 120000;
 
 // ───────────────────────────────────────────────────────────────────────────
 // Q.850 hangup-cause → report status
@@ -54,6 +57,23 @@ function shouldRetry(status, attempt, maxAttempts, retryOn, totalDials, maxTotal
   if (status === 'answered' || !retryOn.has(status) || attempt >= maxAttempts) return false;
   if (maxTotalDials > 0 && totalDials >= maxTotalDials) return false; // hit lifetime cap
   return true;
+}
+
+// ari-client issues its REST calls with no request timeout, so ANY await on it
+// can hang forever if Asterisk stops answering (busy SIP stack, half-open
+// socket). One such hang inside the pump pins the runner's _busy flag and the
+// campaign silently stops dialing for good. Every ARI call the dial path makes
+// is therefore bounded.
+function withTimeout(promise, seconds, label) {
+  let timer;
+  const timeout = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`ARI ${label} timed out after ${seconds}s`);
+      err.ariTimeout = true;
+      reject(err);
+    }, seconds * 1000);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 // ARI errors from a restarting Asterisk carry a whole HTML error page as their
@@ -100,6 +120,7 @@ class Runner {
     this.running = false;
     this.timer = null;
     this._busy = false;
+    this._busySince = 0; // when the current pump pass started (0 = idle)
   }
 
   start() {
@@ -121,9 +142,13 @@ class Runner {
     const client = ari.getClient();
     for (const channelId of [...this.live]) {
       try {
-        await client.channels.hangup({ channelId });
+        await withTimeout(
+          client.channels.hangup({ channelId }),
+          config.dial.ariRequestTimeout,
+          'hangup'
+        );
       } catch (_e) {
-        /* already gone */
+        /* already gone, or ARI not answering — the guard/reaper will finalize */
       }
     }
   }
@@ -139,6 +164,7 @@ class Runner {
     // While idling between retry batches, skip cheaply (no DB) until due.
     if (this.nextRetryAt && this.live.size === 0 && Date.now() < this.nextRetryAt) return;
     this._busy = true;
+    this._busySince = Date.now();
     try {
       // Replenish the token bucket (burst capped at ~1 second of cps).
       this.tokens = Math.min(this.tokens + this.cps * (TICK_MS / 1000), Math.max(this.cps, 1));
@@ -185,6 +211,7 @@ class Runner {
       logger.error(`Runner ${this.id} pump error:`, err.message);
     } finally {
       this._busy = false;
+      this._busySince = 0;
     }
   }
 
@@ -278,8 +305,15 @@ class Runner {
     armCallGuard(channelId, config.dial.originateTimeout + 60);
 
     try {
-      await client.channels.originate(opts);
+      await withTimeout(client.channels.originate(opts), config.dial.ariRequestTimeout, 'originate');
     } catch (err) {
+      if (err && err.ariTimeout) {
+        // Asterisk may well have created the channel before going quiet, so
+        // neither requeue (double call) nor finalize (lost slot) here — the
+        // guard armed above hangs it up by id and finalizes the row either way.
+        logger.warn(`Originate for ${row.phone} timed out — leaving it to the call guard`);
+        return;
+      }
       const msg = originateErrorText(err);
       // "Engine down" is not just socket errors: a restarting Asterisk answers
       // ARI over HTTP with a 503 "Shutdown in progress" page, and its status
@@ -329,11 +363,15 @@ class Runner {
     // subscribed), finalize now instead of holding the slot for the guard.
     if (this.amdEnabled) {
       try {
-        await client.applications.subscribe({
-          applicationName: config.ari.app,
-          eventSource: `channel:${channelId}`,
-        });
-        await client.channels.get({ channelId });
+        await withTimeout(
+          client.applications.subscribe({
+            applicationName: config.ari.app,
+            eventSource: `channel:${channelId}`,
+          }),
+          config.dial.ariRequestTimeout,
+          'subscribe'
+        );
+        await withTimeout(client.channels.get({ channelId }), config.dial.ariRequestTimeout, 'channel get');
       } catch (_e) {
         try {
           await client.channels.hangup({ channelId });
@@ -373,7 +411,7 @@ async function callGuardFired(channelId) {
   logger.warn(`Call ${channelId} got no final event in time — force-finalizing (auto-cut)`);
   const client = ari.getClient();
   try {
-    if (client) await client.channels.hangup({ channelId });
+    if (client) await withTimeout(client.channels.hangup({ channelId }), config.dial.ariRequestTimeout, 'hangup');
   } catch (_e) {
     /* channel may already be gone (a missed event) — finalize the row anyway */
   }
@@ -1000,7 +1038,28 @@ async function reconcileRunners() {
     );
     for (const c of running) {
       const runner = runners.get(c.id);
-      if (runner && runner.running) continue; // healthy
+      if (runner && runner.running) {
+        // A "running" runner can still be wedged: an await that never settles
+        // pins _busy, and stale live entries (whose calls are long gone) eat
+        // the concurrency slots the dial loop checks. Neither logs anything,
+        // so break both here rather than wait for a diagnosis of the next
+        // unbounded call. This is the generic stall-breaker.
+        if (runner._busySince && Date.now() - runner._busySince > STUCK_PUMP_MS) {
+          logger.warn(
+            `Campaign ${c.id} pump stuck for ${Math.round((Date.now() - runner._busySince) / 1000)}s — resetting it`
+          );
+          runner._busy = false;
+          runner._busySince = 0;
+          runner.buffer = [];
+        }
+        for (const channelId of [...runner.live]) {
+          if (!activeCalls.has(channelId)) {
+            logger.warn(`Campaign ${c.id} holding a slot for untracked channel ${channelId} — freeing it`);
+            runner.live.delete(channelId);
+          }
+        }
+        continue; // healthy (or just unwedged)
+      }
       logger.warn(`Campaign ${c.id} is 'running' with ${runner ? 'a paused' : 'no'} runner — restarting it`);
       await startCampaign(c.id).catch((e) =>
         logger.error(`Could not restart campaign ${c.id}:`, e.message)
