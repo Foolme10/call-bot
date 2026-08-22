@@ -116,6 +116,9 @@ class Runner {
 
   async pump() {
     if (!this.running || this._busy) return;
+    // Engine down (ARI reconnecting): don't dispatch — every originate would
+    // fail instantly and burn the number's attempts. Resume when it's back.
+    if (!ari.isConnected()) return;
     // While idling between retry batches, skip cheaply (no DB) until due.
     if (this.nextRetryAt && this.live.size === 0 && Date.now() < this.nextRetryAt) return;
     this._busy = true;
@@ -143,12 +146,15 @@ class Runner {
       }
 
       // No due rows left and nothing in progress: either finished, or just
-      // waiting for pending retries to come due.
+      // waiting for pending retries to come due. Count with the SAME lifetime-
+      // cap filter takeNext uses — a 'queued' row already at the cap can never
+      // be dialed, and counting it here pins the campaign 'running' forever.
       if (this.running && ranDry && this.live.size === 0) {
+        const capSql = this.maxTotalDials > 0 ? 'AND total_dials < :cap' : '';
         const [agg] = await db.query(
           `SELECT COUNT(*) AS queued, MIN(next_attempt_at) AS nextAt
-             FROM call_logs WHERE campaign_id = :id AND status = 'queued'`,
-          { id: this.id }
+             FROM call_logs WHERE campaign_id = :id AND status = 'queued' ${capSql}`,
+          { id: this.id, cap: this.maxTotalDials }
         );
         if (Number(agg.queued) === 0) {
           await finalizeCampaign(this.id, 'completed');
@@ -189,13 +195,22 @@ class Runner {
     // can't grab it again. globalLive tracks the trunk-wide budget.
     this.live.add(channelId);
     globalLive += 1;
-    await db.execute(
-      `UPDATE call_logs
-          SET status = 'dialing', channel = :channel, dial_start = UTC_TIMESTAMP(),
-              attempts = attempts + 1, total_dials = total_dials + 1
-        WHERE id = :id`,
-      { channel: channelId, id: row.id }
-    );
+    try {
+      await db.execute(
+        `UPDATE call_logs
+            SET status = 'dialing', channel = :channel, dial_start = UTC_TIMESTAMP(),
+                attempts = attempts + 1, total_dials = total_dials + 1
+          WHERE id = :id`,
+        { channel: channelId, id: row.id }
+      );
+    } catch (err) {
+      // Roll the reservation back — without this a transient DB error here
+      // burned a concurrency slot forever (no activeCalls entry means
+      // finalizeCall could never free it). The row stays 'queued' for a retry.
+      this.live.delete(channelId);
+      globalLive = Math.max(0, globalLive - 1);
+      throw err;
+    }
     activeCalls.set(channelId, {
       campaignId: this.id,
       callLogId: row.id,
@@ -206,7 +221,8 @@ class Runner {
       answered: false,
       media: this.media,
       mediaDuration: this.mediaDuration,
-      guardTimer: null, // auto-hangup safety timer (armed when playback starts)
+      guardTimer: null, // event-loss safety timer (armed below, re-armed per phase)
+      dispatchedAt: Date.now(), // for the reaper's stale-call sweep
       runner: this,
       finalized: false,
       attempt: (row.attempts || 0) + 1, // this dial is attempt N
@@ -237,18 +253,107 @@ class Runner {
       opts.appArgs = String(this.id);
     }
 
+    // Arm the event-loss guard BEFORE originating: if the originate call hangs,
+    // or the channel dies before its event subscription lands (the AMD/context
+    // path is only subscribed after originate, so a fast SIP reject can beat
+    // it), no ChannelDestroyed ever arrives — the guard finalizes instead of
+    // leaking the slot. Answering re-arms it; finalizeCall clears it.
+    armCallGuard(channelId, config.dial.originateTimeout + 60);
+
     try {
       await client.channels.originate(opts);
-      // Make sure we get this channel's lifecycle events even if it never
-      // enters Stasis (busy / no-answer are reported via ChannelDestroyed).
+    } catch (err) {
+      const msg = String((err && err.message) || err);
+      const engineDown =
+        !ari.isConnected() || /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|socket hang up/i.test(msg);
+      if (engineDown) {
+        // The ENGINE failed, not the number — undo the whole attempt so the
+        // row is redialed when Asterisk is back, instead of terminally burning
+        // through the list at full cps during an outage.
+        logger.warn(`Originate failed for ${row.phone} (engine down, will redial): ${msg}`);
+        const call = activeCalls.get(channelId);
+        if (call) {
+          call.finalized = true;
+          if (call.guardTimer) clearTimeout(call.guardTimer);
+        }
+        activeCalls.delete(channelId);
+        this.live.delete(channelId);
+        globalLive = Math.max(0, globalLive - 1);
+        await db.execute(
+          `UPDATE call_logs
+              SET status = 'queued', channel = NULL, dial_start = NULL,
+                  attempts = GREATEST(attempts, 1) - 1,
+                  total_dials = GREATEST(total_dials, 1) - 1
+            WHERE id = :id AND channel = :channel`,
+          { id: row.id, channel: channelId }
+        );
+        return;
+      }
+      logger.warn(`Originate failed for ${row.phone}: ${msg}`);
+      await finalizeCall(channelId, null, 'failed');
+      return;
+    }
+
+    // Make sure we get this channel's lifecycle events even if it never enters
+    // Stasis (busy / no-answer are reported via ChannelDestroyed). App-mode
+    // originates are auto-subscribed, so this is only load-bearing for the
+    // AMD/context path — where a fast SIP reject can also destroy the channel
+    // BEFORE the subscription lands, losing its ChannelDestroyed. Probe once
+    // after subscribing: if the channel is already gone (or can't be
+    // subscribed), finalize now instead of holding the slot for the guard.
+    if (this.amdEnabled) {
+      try {
+        await client.applications.subscribe({
+          applicationName: config.ari.app,
+          eventSource: `channel:${channelId}`,
+        });
+        await client.channels.get({ channelId });
+      } catch (_e) {
+        try {
+          await client.channels.hangup({ channelId });
+        } catch (_e2) {}
+        await finalizeCall(channelId, null, 'failed');
+      }
+    } else {
       client.applications
         .subscribe({ applicationName: config.ari.app, eventSource: `channel:${channelId}` })
-        .catch(() => {});
-    } catch (err) {
-      logger.warn(`Originate failed for ${row.phone}: ${err.message}`);
-      await finalizeCall(channelId, null, 'failed');
+        .catch((err) =>
+          logger.warn(`Event subscribe failed for ${channelId} (guard will finalize): ${err.message}`)
+        );
     }
   }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Per-call event-loss guard. Every call MUST end in finalizeCall or its
+// concurrency slot (runner.live / activeCalls / globalLive) leaks forever and
+// the campaign silently stops dialing while staying "running". finalizeCall
+// normally runs off ChannelDestroyed, but that event can be lost (AMD calls are
+// only subscribed after originate, the ARI websocket can drop, a hangup's event
+// can go missing) — so a deadline timer rides along from dispatch onward,
+// re-armed at each phase, and force-finalizes if no event ever arrives.
+function armCallGuard(channelId, seconds) {
+  const call = activeCalls.get(channelId);
+  if (!call) return;
+  if (call.guardTimer) clearTimeout(call.guardTimer);
+  call.guardTimer = setTimeout(() => {
+    callGuardFired(channelId).catch((e) => logger.error(`Call guard ${channelId}:`, e.message));
+  }, seconds * 1000);
+}
+
+async function callGuardFired(channelId) {
+  const call = activeCalls.get(channelId);
+  if (!call || call.finalized) return;
+  logger.warn(`Call ${channelId} got no final event in time — force-finalizing (auto-cut)`);
+  const client = ari.getClient();
+  try {
+    if (client) await client.channels.hangup({ channelId });
+  } catch (_e) {
+    /* channel may already be gone (a missed event) — finalize the row anyway */
+  }
+  // Finalize directly so the slot frees and the row gets an end_time even when
+  // the channel was already dead and no ChannelDestroyed will ever come.
+  await finalizeCall(channelId, 16 /* normal clearing */, call.answered ? 'answered' : undefined);
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -260,37 +365,18 @@ function registerHandlers(client) {
   client.removeAllListeners('PlaybackFinished');
   client.removeAllListeners('ChannelDestroyed');
 
-  // Arm the auto-hangup safety once a recording starts playing. It fires only if
-  // the call outlives the recording's own length + a buffer — i.e. the normal
-  // "hang up when the audio ends" never happened. Unknown length → fallback cap.
-  function armHangupGuard(channelId) {
-    const call = activeCalls.get(channelId);
-    if (!call) return;
-    const sec =
-      call.mediaDuration > 0 ? call.mediaDuration + config.dial.hangupBufferSec : config.dial.maxCallSeconds;
-    if (call.guardTimer) clearTimeout(call.guardTimer);
-    call.guardTimer = setTimeout(() => {
-      hangupGuardFired(channelId).catch((e) => logger.error(`Hangup guard ${channelId}:`, e.message));
-    }, sec * 1000);
-  }
-
-  async function hangupGuardFired(channelId) {
-    const call = activeCalls.get(channelId);
-    if (!call || call.finalized) return;
-    logger.warn(`Call ${channelId} outlived its recording — force hanging up (auto-cut)`);
-    try {
-      await client.channels.hangup({ channelId });
-    } catch (_e) {
-      /* channel may already be gone (a missed event) — finalize the row anyway */
-    }
-    // Finalize directly so the row gets an end_time and drops off the monitor
-    // even when the channel was already dead and no ChannelDestroyed will come.
-    await finalizeCall(channelId, 16 /* normal clearing */, call.answered ? 'answered' : undefined);
-  }
-
+  // NOTE: handler bodies are wrapped in try/catch — ari-client is a plain
+  // EventEmitter, so a rejected async listener becomes an unhandled rejection
+  // and kills the whole process on one transient DB error.
   client.on('StasisStart', async (_event, channel) => {
+   try {
     const call = activeCalls.get(channel.id);
     if (!call) return; // not one of ours
+
+    // Answered: from here the call should end within maxCallSeconds whatever
+    // happens (machine hangup, missing media, playback failure) — re-arm the
+    // guard so a lost hangup event can't leak the slot.
+    armCallGuard(channel.id, config.dial.maxCallSeconds);
 
     // Answering-machine detection: for AMD campaigns the channel ran AMD() in
     // the dialplan before entering Stasis, so AMDSTATUS is set. Machines are
@@ -349,34 +435,48 @@ function registerHandlers(client) {
       const playback = await channel.play({ media: call.media });
       call.playbackId = playback.id;
       playbackIndex.set(playback.id, channel.id);
-      armHangupGuard(channel.id); // safety: force-cut if the recording never "finishes"
+      // Tighten the guard to the recording's own length + buffer, so a call
+      // that outlives its message is force-cut without ever cutting one short.
+      armCallGuard(
+        channel.id,
+        call.mediaDuration > 0 ? call.mediaDuration + config.dial.hangupBufferSec : config.dial.maxCallSeconds
+      );
     } catch (err) {
       logger.warn(`Playback failed on ${channel.id}: ${err.message}`);
       try {
         await channel.hangup();
       } catch (_e) {}
     }
+   } catch (err) {
+    logger.error(`StasisStart handler error on ${channel && channel.id}:`, err.message);
+   }
   });
 
   // When the message finishes, hang up — that's the whole call for a broadcast.
   client.on('PlaybackFinished', async (_event, playback) => {
+   try {
     const channelId = playbackIndex.get(playback.id);
     if (!channelId) return;
     playbackIndex.delete(playback.id);
-    // The recording finished normally — cancel the safety timer and hang up now.
-    const call = activeCalls.get(channelId);
-    if (call && call.guardTimer) {
-      clearTimeout(call.guardTimer);
-      call.guardTimer = null;
-    }
+    // The recording finished normally — hang up now. Keep a short guard armed
+    // instead of clearing it: if this hangup (or its ChannelDestroyed event) is
+    // lost, the guard still finalizes the call rather than leaking its slot.
+    armCallGuard(channelId, config.dial.hangupBufferSec);
     try {
       await client.channels.hangup({ channelId });
     } catch (_e) {}
+   } catch (err) {
+    logger.error(`PlaybackFinished handler error:`, err.message);
+   }
   });
 
   client.on('ChannelDestroyed', async (event, channel) => {
+   try {
     const id = channel.id || (event.channel && event.channel.id);
     await finalizeCall(id, event.cause, null);
+   } catch (err) {
+    logger.error(`ChannelDestroyed handler error:`, err.message);
+   }
   });
 }
 
@@ -390,8 +490,14 @@ async function finalizeCall(channelId, cause, forcedStatus) {
   if (call.guardTimer) clearTimeout(call.guardTimer);
   if (call.playbackId) playbackIndex.delete(call.playbackId);
 
-  const status = forcedStatus || call.outcome || mapCause(cause, call.answered);
   const runner = runners.get(call.campaignId);
+  // Free the concurrency slot BEFORE any await: once the activeCalls entry is
+  // gone, nothing could ever remove the channelId from runner.live again, and
+  // a single zombie entry blocks the completion check forever. If a DB write
+  // below fails, the row is left 'dialing' and the reaper finalizes it.
+  if (runner) runner.live.delete(channelId);
+
+  const status = forcedStatus || call.outcome || mapCause(cause, call.answered);
   const causeVal = cause == null ? null : Number(cause);
 
   // Retry? Requeue instead of finalizing when the outcome is retryable, the
@@ -400,58 +506,63 @@ async function finalizeCall(channelId, cause, forcedStatus) {
     runner &&
     shouldRetry(status, call.attempt, runner.maxAttempts, runner.retryOn, call.totalDials, runner.maxTotalDials);
 
-  if (willRetry) {
-    await db.execute(
+  try {
+    // Both writes are guarded by `channel = :channel` so a STALE finalize — a
+    // guard timer firing after a stop/rerun already reset this row, or after
+    // the row was re-dialed on a new channel — matches nothing instead of
+    // clobbering (or double-queueing) the row out from under the new run.
+    if (willRetry) {
+      const res = await db.execute(
+        `UPDATE call_logs
+            SET status = 'queued',
+                channel = NULL,
+                hangup_cause = :cause,
+                end_time = UTC_TIMESTAMP(),
+                duration_sec = TIMESTAMPDIFF(SECOND, COALESCE(answer_time, dial_start), UTC_TIMESTAMP()),
+                next_attempt_at = CASE WHEN :delay > 0
+                                       THEN DATE_ADD(UTC_TIMESTAMP(), INTERVAL :delay MINUTE)
+                                       ELSE NULL END
+          WHERE id = :id AND channel = :channel`,
+        { cause: causeVal, delay: runner.retryDelayMin, id: call.callLogId, channel: channelId }
+      );
+      if (res.affectedRows > 0) {
+        monitor.publish(call.campaignId, {
+          type: 'call',
+          callLogId: call.callLogId,
+          name: call.name,
+          phone: call.phone,
+          status,
+          retrying: true,
+          attempt: call.attempt,
+          at: new Date().toISOString(),
+        });
+        runner.nextRetryAt = null; // a new (possibly sooner) retry exists — recompute
+      }
+      return;
+    }
+
+    const res = await db.execute(
       `UPDATE call_logs
-          SET status = 'queued',
-              channel = NULL,
+          SET status = :status,
               hangup_cause = :cause,
               end_time = UTC_TIMESTAMP(),
-              duration_sec = TIMESTAMPDIFF(SECOND, COALESCE(answer_time, dial_start), UTC_TIMESTAMP()),
-              next_attempt_at = CASE WHEN :delay > 0
-                                     THEN DATE_ADD(UTC_TIMESTAMP(), INTERVAL :delay MINUTE)
-                                     ELSE NULL END
-        WHERE id = :id`,
-      { cause: causeVal, delay: runner.retryDelayMin, id: call.callLogId }
+              duration_sec = TIMESTAMPDIFF(SECOND, COALESCE(answer_time, dial_start), UTC_TIMESTAMP())
+        WHERE id = :id AND channel = :channel`,
+      { status, cause: causeVal, id: call.callLogId, channel: channelId }
     );
-    monitor.publish(call.campaignId, {
-      type: 'call',
-      callLogId: call.callLogId,
-      name: call.name,
-      phone: call.phone,
-      status,
-      retrying: true,
-      attempt: call.attempt,
-      at: new Date().toISOString(),
-    });
-    runner.live.delete(channelId);
-    runner.nextRetryAt = null; // a new (possibly sooner) retry exists — recompute
-    runner.pump();
-    return;
-  }
-
-  await db.execute(
-    `UPDATE call_logs
-        SET status = :status,
-            hangup_cause = :cause,
-            end_time = UTC_TIMESTAMP(),
-            duration_sec = TIMESTAMPDIFF(SECOND, COALESCE(answer_time, dial_start), UTC_TIMESTAMP())
-      WHERE id = :id`,
-    { status, cause: causeVal, id: call.callLogId }
-  );
-  monitor.publish(call.campaignId, {
-    type: 'call',
-    callLogId: call.callLogId,
-    name: call.name,
-    phone: call.phone,
-    status,
-    attempt: call.attempt,
-    at: new Date().toISOString(),
-  });
-
-  if (runner) {
-    runner.live.delete(channelId);
-    runner.pump(); // fill the freed slot / check completion
+    if (res.affectedRows > 0) {
+      monitor.publish(call.campaignId, {
+        type: 'call',
+        callLogId: call.callLogId,
+        name: call.name,
+        phone: call.phone,
+        status,
+        attempt: call.attempt,
+        at: new Date().toISOString(),
+      });
+    }
+  } finally {
+    if (runner) runner.pump(); // fill the freed slot / check completion
   }
 }
 
@@ -493,7 +604,8 @@ async function startCampaign(campaignId) {
   await ensureCallLogs(campaignId);
   await db.execute(
     `UPDATE campaigns
-        SET status = 'running', started_at = COALESCE(started_at, UTC_TIMESTAMP())
+        SET status = 'running', stop_reason = NULL,
+            started_at = COALESCE(started_at, UTC_TIMESTAMP())
       WHERE id = :id`,
     { id: campaignId }
   );
@@ -615,15 +727,19 @@ async function stopCampaign(campaignId) {
 }
 
 async function finalizeCampaign(campaignId, status) {
+  // Write the terminal status FIRST: if this update fails transiently, the
+  // runner is still alive and its next pump tick retries the finalize. The old
+  // order (runner torn down, then update) left the campaign 'running' forever
+  // with no runner when this one write failed.
+  await db.execute(
+    'UPDATE campaigns SET status = :status, completed_at = UTC_TIMESTAMP() WHERE id = :id',
+    { status, id: campaignId }
+  );
   const runner = runners.get(campaignId);
   if (runner) {
     runner.pause();
     runners.delete(campaignId);
   }
-  await db.execute(
-    'UPDATE campaigns SET status = :status, completed_at = UTC_TIMESTAMP() WHERE id = :id',
-    { status, id: campaignId }
-  );
   monitor.publish(campaignId, { type: 'campaign', status });
   logger.info(`Campaign ${campaignId} ${status}`);
 }
@@ -633,9 +749,29 @@ async function finalizeCampaign(campaignId, status) {
 // ───────────────────────────────────────────────────────────────────────────
 async function onConnect(client) {
   registerHandlers(client);
+  // Freeze every pump while state is reset below — `connected` is already true
+  // at this point, so a runner that survived a reconnect could otherwise
+  // dispatch a call mid-cleanup and have it orphaned (untracked live channel,
+  // row re-queued, number dialed twice). The resume loop restarts running ones.
+  for (const runner of runners.values()) runner.pause();
+
   // A reconnect orphans any in-flight channels; reset them so they get redialed.
   // Scope to voice campaigns so an ARI reconnect never touches an SMS campaign's
   // in-flight ('dialing') rows, which the SMS engine owns.
+  // A row already AT the lifetime dial cap must not go (or stay) 'queued' — the
+  // dial queue filters capped rows out, so it could never be dialed again and
+  // would sit 'queued' forever. Close such rows out as failed instead ('queued'
+  // ones are legacy strays from before this fix; this heals them at boot).
+  if (config.calls.maxTotalDials > 0) {
+    await db.execute(
+      `UPDATE call_logs
+          SET status = 'failed', channel = NULL, end_time = UTC_TIMESTAMP(),
+              duration_sec = TIMESTAMPDIFF(SECOND, COALESCE(answer_time, dial_start), UTC_TIMESTAMP())
+        WHERE status IN ('dialing', 'queued') AND total_dials >= :cap
+          AND campaign_id IN (SELECT id FROM campaigns WHERE channel = 'voice')`,
+      { cap: config.calls.maxTotalDials }
+    );
+  }
   await db.execute(
     `UPDATE call_logs SET status = 'queued', channel = NULL
       WHERE status = 'dialing'
@@ -652,9 +788,22 @@ async function onConnect(client) {
       WHERE status = 'answered' AND end_time IS NULL
         AND campaign_id IN (SELECT id FROM campaigns WHERE channel = 'voice')`
   );
+  for (const call of activeCalls.values()) {
+    if (call.guardTimer) clearTimeout(call.guardTimer);
+  }
   activeCalls.clear();
   playbackIndex.clear();
   globalLive = 0;
+  // Runners survive an ARI reconnect (only a full restart clears them). Their
+  // live sets still hold the orphaned channels we just reset — and nothing can
+  // ever remove those entries now that activeCalls is empty. Left in place they
+  // permanently eat concurrency slots (and even ONE blocks the completion
+  // check), so the campaign would silently stop dialing while stuck "running".
+  for (const runner of runners.values()) {
+    runner.live.clear();
+    runner.buffer = [];
+    runner.nextRetryAt = null;
+  }
 
   // Resume voice campaigns that were running before a restart. SMS campaigns
   // are resumed independently by smsSender (they don't use ARI).
@@ -666,6 +815,28 @@ async function onConnect(client) {
       await startCampaign(c.id);
     } catch (e) {
       logger.error(`Could not resume campaign ${c.id}:`, e.message);
+      // Kill any surviving runner FIRST — writing 'stopped' while a live
+      // runner keeps ticking would let calls silently go out on a campaign
+      // the operator sees as stopped.
+      const r = runners.get(c.id);
+      if (r) {
+        r.pause();
+        runners.delete(c.id);
+      }
+      // ARI dropped again mid-resume: leave the campaign 'running' — the next
+      // reconnect runs this recovery again and resumes it then.
+      if (!ari.isConnected()) continue;
+      // Any other failure: never leave it stuck 'running' with no runner —
+      // stop it with the reason so the operator sees it and can press Start.
+      await db
+        .execute(
+          `UPDATE campaigns
+              SET status = 'stopped', stop_reason = :reason, completed_at = UTC_TIMESTAMP()
+            WHERE id = :id AND status = 'running'`,
+          { reason: `Could not resume after restart: ${e.message}`.slice(0, 255), id: c.id }
+        )
+        .catch(() => {});
+      monitor.publish(c.id, { type: 'campaign', status: 'stopped' });
     }
   }
 }
@@ -677,8 +848,27 @@ async function onConnect(client) {
 // call, so it can't cut a live one.
 async function reapStuckCalls() {
   try {
-    const activeIds = new Set([...activeCalls.values()].map((c) => c.callLogId));
     const cutoff = config.dial.maxCallSeconds + 120; // generous — beyond any real call
+
+    // In-memory sweep first: a tracked call this old has lost its events AND
+    // its guard timer (which fires well inside this threshold — including for a
+    // recording longer than maxCallSeconds). finalizeCall frees its
+    // runner/global slots properly — without this, one such call blocks its
+    // campaign's completion forever and the row below is skipped as "tracked".
+    for (const [channelId, call] of [...activeCalls]) {
+      // Ring time + the longest legitimate talk phase + slack, so the sweep
+      // can never beat a properly armed guard on a live call.
+      const staleSec =
+        config.dial.originateTimeout +
+        Math.max(config.dial.maxCallSeconds, call.mediaDuration + config.dial.hangupBufferSec) +
+        120;
+      if (call.dispatchedAt && Date.now() - call.dispatchedAt > staleSec * 1000) {
+        logger.warn(`Reaping stuck in-memory call ${channelId}`);
+        await callGuardFired(channelId);
+      }
+    }
+
+    const activeIds = new Set([...activeCalls.values()].map((c) => c.callLogId));
     const rows = await db.query(
       `SELECT id FROM call_logs
          WHERE status IN ('dialing','answered') AND end_time IS NULL

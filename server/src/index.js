@@ -106,6 +106,13 @@ if (require.main === module) {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
+  // Node kills the process on any unhandled rejection — e.g. one transient DB
+  // error escaping an async event listener — taking every running campaign down
+  // with it. Log it loudly and keep serving instead.
+  process.on('unhandledRejection', (reason) => {
+    logger.error('Unhandled promise rejection:', reason && (reason.stack || reason.message || reason));
+  });
+
   start().catch((err) => {
     logger.error('Fatal startup error:', err.message);
     process.exit(1);

@@ -177,15 +177,30 @@ class SmsRunner {
         // Nothing is in flight, so any row still 'dialing' is orphaned (an
         // outcome write that failed after the send). Reclaim it to 'queued' so
         // it's resent rather than silently lost — and so we never finalize a
-        // campaign with a non-terminal row.
+        // campaign with a non-terminal row. A row already AT the lifetime cap
+        // can't be requeued (the queue filters capped rows, it would sit
+        // 'queued' forever) — close it out instead.
+        if (this.maxTotalDials > 0) {
+          await db.execute(
+            `UPDATE call_logs
+                SET status = 'failed', error_detail = 'Interrupted at the lifetime send cap',
+                    end_time = UTC_TIMESTAMP()
+              WHERE campaign_id = :id AND status = 'dialing' AND total_dials >= :cap`,
+            { id: this.id, cap: this.maxTotalDials }
+          );
+        }
         await db.execute(
           "UPDATE call_logs SET status = 'queued', dial_start = NULL WHERE campaign_id = :id AND status = 'dialing'",
           { id: this.id }
         );
+        // Count with the SAME lifetime-cap filter takeNext uses — a 'queued'
+        // row already at the cap can never be sent, and counting it here would
+        // pin the campaign 'running' forever.
+        const capSql = this.maxTotalDials > 0 ? 'AND total_dials < :cap' : '';
         const [agg] = await db.query(
           `SELECT COUNT(*) AS queued, MIN(next_attempt_at) AS nextAt
-             FROM call_logs WHERE campaign_id = :id AND status = 'queued'`,
-          { id: this.id }
+             FROM call_logs WHERE campaign_id = :id AND status = 'queued' ${capSql}`,
+          { id: this.id, cap: this.maxTotalDials }
         );
         if (Number(agg.queued) === 0) {
           await finalizeCampaign(this.id, 'completed');
@@ -559,16 +574,20 @@ async function abortCampaign(campaignId, reason) {
 }
 
 async function finalizeCampaign(campaignId, status) {
+  // Write the terminal status FIRST: if this update fails transiently, the
+  // runner is still alive and its next pump tick retries the finalize — the
+  // old order (runner torn down, then update) left the campaign 'running'
+  // forever with no runner when this one write failed.
+  await db.execute(
+    'UPDATE campaigns SET status = :status, completed_at = UTC_TIMESTAMP() WHERE id = :id',
+    { status, id: campaignId }
+  );
   const runner = runners.get(campaignId);
   if (runner) {
     runner.pause();
     flushSpend(runner, campaignId, `Campaign ${status}`);
     runners.delete(campaignId);
   }
-  await db.execute(
-    'UPDATE campaigns SET status = :status, completed_at = UTC_TIMESTAMP() WHERE id = :id',
-    { status, id: campaignId }
-  );
   monitor.publish(campaignId, { type: 'campaign', status });
   logger.info(`SMS campaign ${campaignId} ${status}`);
 }
@@ -594,6 +613,18 @@ async function checkScheduled() {
 
 async function start() {
   // A restart orphans any in-flight sends; reset them so they get resent.
+  // Rows already AT the lifetime cap can't be requeued (the send queue filters
+  // capped rows — they'd sit 'queued' forever) — close them out instead.
+  if (config.calls.maxTotalDials > 0) {
+    await db.execute(
+      `UPDATE call_logs
+          SET status = 'failed', error_detail = 'Interrupted at the lifetime send cap',
+              end_time = UTC_TIMESTAMP()
+        WHERE status = 'dialing' AND total_dials >= :cap
+          AND campaign_id IN (SELECT id FROM campaigns WHERE channel = 'sms')`,
+      { cap: config.calls.maxTotalDials }
+    );
+  }
   await db.execute(
     `UPDATE call_logs SET status = 'queued', channel = NULL
       WHERE status = 'dialing'
