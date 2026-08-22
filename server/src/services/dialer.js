@@ -55,6 +55,19 @@ function shouldRetry(status, attempt, maxAttempts, retryOn, totalDials, maxTotal
   return true;
 }
 
+// ARI errors from a restarting Asterisk carry a whole HTML error page as their
+// message. Collapse that to one readable line so a bounce doesn't dump hundreds
+// of lines of markup into the log (and hide the warnings that matter).
+function originateErrorText(err) {
+  const raw = String((err && err.message) || err || '');
+  if (!/<html|<!DOCTYPE/i.test(raw)) return raw.slice(0, 300);
+  const title = raw.match(/<title>([^<]+)<\/title>/i);
+  const body = raw.match(/<h1>([^<]+)<\/h1>\s*<p>([^<]+)<\/p>/i);
+  if (title && body) return `${title[1].trim()} — ${body[2].trim()}`;
+  if (title) return title[1].trim();
+  return raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Runner: paces a single campaign's dialing.
 // ───────────────────────────────────────────────────────────────────────────
@@ -263,9 +276,18 @@ class Runner {
     try {
       await client.channels.originate(opts);
     } catch (err) {
-      const msg = String((err && err.message) || err);
+      const msg = originateErrorText(err);
+      // "Engine down" is not just socket errors: a restarting Asterisk answers
+      // ARI over HTTP with a 503 "Shutdown in progress" page, and its status
+      // code / HTML body is what surfaces here. Those numbers were never
+      // dialed, so they must go back on the queue — marking them 'failed'
+      // burns the list at full cps every time Asterisk bounces.
+      const status = Number((err && (err.status || err.statusCode)) || 0);
       const engineDown =
-        !ari.isConnected() || /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|socket hang up/i.test(msg);
+        !ari.isConnected() ||
+        (status >= 500 && status <= 599) ||
+        /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|socket hang up|EPIPE/i.test(msg) ||
+        /Shutdown in progress|Service Unavailable|Bad Gateway|Gateway Time-?out|50[0234]\s/i.test(msg);
       if (engineDown) {
         // The ENGINE failed, not the number — undo the whole attempt so the
         // row is redialed when Asterisk is back, instead of terminally burning
