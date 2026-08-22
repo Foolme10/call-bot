@@ -456,6 +456,7 @@ function registerHandlers(client) {
     try {
       const playback = await channel.play({ media: call.media });
       call.playbackId = playback.id;
+      call.playbackStartedAt = Date.now();
       playbackIndex.set(playback.id, channel.id);
       // Tighten the guard to the recording's own length + buffer, so a call
       // that outlives its message is force-cut without ever cutting one short.
@@ -480,15 +481,23 @@ function registerHandlers(client) {
     const channelId = playbackIndex.get(playback.id);
     if (!channelId) return;
     playbackIndex.delete(playback.id);
-    // A recording that failed to play (missing file, unreadable by Asterisk,
-    // wrong format) still ends the call — the callee just heard silence. Say
-    // so loudly: otherwise the campaign looks healthy while nobody hears it.
+    // Asterisk reports state 'failed' for BOTH a media problem (missing or
+    // unplayable file) and the ordinary case of the callee hanging up
+    // mid-message — which is routine in a broadcast. Tell them apart by how
+    // far the recording got: a media problem fails almost instantly, a hangup
+    // happens seconds in. Only the former is worth alarming about.
     if (playback.state === 'failed') {
       const call = activeCalls.get(channelId);
-      logger.error(
-        `Recording did NOT play on ${channelId} (${(call && call.media) || 'unknown media'}) — ` +
-          `callee heard silence. Check the file exists under AUDIO_DIR and is readable by Asterisk.`
-      );
+      const playedMs = call && call.playbackStartedAt ? Date.now() - call.playbackStartedAt : null;
+      if (playedMs !== null && playedMs < 1500) {
+        logger.error(
+          `Recording did NOT play on ${channelId} (${(call && call.media) || 'unknown media'}) — ` +
+            `failed after ${playedMs}ms, so the callee heard silence. Check the file exists under ` +
+            `AUDIO_DIR and is 8kHz 16-bit mono WAV that Asterisk can open.`
+        );
+      } else {
+        logger.info(`Playback cut short on ${channelId} after ${playedMs}ms (callee hung up)`);
+      }
     }
     // The recording finished normally — hang up now. Keep a short guard armed
     // instead of clearing it: if this hangup (or its ChannelDestroyed event) is
